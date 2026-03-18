@@ -21,26 +21,34 @@ parse(X,statement(NT,VT)) :-
 noun_phrase(PoS, noun(Noun), [Noun]) :- noun(PoS, Noun).
 noun_phrase(PoS, noun(Noun), [X,Noun]) :- determinant(PoS, X), noun(PoS, Noun).
 noun_phrase(PoS, NT, [Qualifier, Noun]) :- NT =.. [Qualifier, noun(Noun)], noun(PoS, Noun), qualifier(PoS, Qualifier).
-noun_phrase(PoS, NT, [Qualifier|Relcl]) :- .
+noun_phrase(PoS, NT, [Qualifier|Relcl]) :- qualifier(PoS, Qualifier), relcl(PoS, RT, Relcl), NT =.. [Qualifier, RT].
 
-verb_phrase(PoS, verb(Verb), [Verb]) :- verb(PoS, Verb).
+verb_phrase(PoS, verb(Verb), [Verb]) :- int_verb(PoS, Verb).
+verb_phrase(PoS, verb(Verb, NP), [Verb|N]) :- trans_verb(PoS, Verb), noun_phrase(_, NP, N).
 
-relcl(PoS, relcl(Noun, Relative, VP), [Noun,Relative|V]) :- .
+relcl(PoS, relcl(noun(Noun), VP), [Noun, Relative|V]) :- relative(Relative), noun(PoS, Noun), verb_phrase(PoS, VP, V).
 
 determinant(_, the).
-determinant(singular, a).
+% determinant(singular, a).
 
 noun(singular, apple).
-noun(singular, boy).
-noun(singular, girl).
-
 noun(plural, apples).
+noun(singular, boy).
 noun(plural, boys).
+noun(singular, girl).
 noun(plural, girls).
 
-verb(singular, runs).
+int_verb(singular, runs).
+int_verb(plural, run).
+int_verb(singular, dances).
+int_verb(plural, dance).
 
-verb(plural, run).
+trans_verb(singular, likes).
+trans_verb(plural, like).
+trans_verb(singular, hates).
+trans_verb(plural, hate).
+trans_verb(singular, respects).
+trans_verb(plural, respect).
 
 qualifier(_, some).
 qualifier(plural, all).
