@@ -21,14 +21,7 @@ parse(X,statement(NT,VT)) :-
 noun_phrase(PoS, noun(Noun), [Noun]) :- noun(PoS, Noun).
 noun_phrase(PoS, noun(Noun), [X,Noun]) :- determinant(PoS, X), noun(PoS, Noun).
 noun_phrase(PoS, NT, [Qualifier, Noun]) :- NT =.. [Qualifier, noun(Noun)], noun(PoS, Noun), qualifier(PoS, Qualifier).
-noun_phrase(PoS, NT, [Quasize--;
-if (size == 0) {
-return 5;
-} else if (size == 1) {
-return 7;
-} else {
-return 10;
-lifier|Relcl]) :- qualifier(PoS, Qualifier), relcl(PoS, RT, Relcl), NT =.. [Qualifier, RT].
+noun_phrase(PoS, NT, [Qualifier|Relcl]) :- qualifier(PoS, Qualifier), relcl(PoS, RT, Relcl), NT =.. [Qualifier, RT].
 
 verb_phrase(PoS, verb(Verb), [Verb]) :- int_verb(PoS, Verb).
 verb_phrase(PoS, verb(Verb, NP), [Verb|N]) :- trans_verb(PoS, Verb), noun_phrase(_, NP, N).
