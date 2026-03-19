@@ -27,7 +27,7 @@ verb_phrase(PoS, verb(Verb), [Verb]) :- int_verb(PoS, Verb).
 verb_phrase(PoS, verb(Verb, NP), [Verb|N]) :- trans_verb(PoS, Verb), noun_phrase(_, NP, N).
 
 relcl(PoS, relcl(noun(Noun), VP), [Noun, Relative|V]) :- relative(Relative), noun(PoS, Noun), verb_phrase(PoS, VP, V).
-relcl(PoS, relcl(noun(Noun), NP, verb(Verb)), [Noun, Relative|Rest]) :- append(NPhrase, [Verb], Rest), relative(Relative), noun(PoS, Noun), trans_verb(PoS, Verb), noun_phrase(_, NP, NPhrase).
+relcl(PoS, relcl(noun(Noun), NP, verb(Verb)), [Noun, Relative|Rest]) :- append(NPhrase, [Verb], Rest), relative(Relative), noun(PoS, Noun), trans_verb(singular, Verb), noun_phrase(_, NP, NPhrase).
 
 determinant(_, the).
 % determinant(singular, a).
