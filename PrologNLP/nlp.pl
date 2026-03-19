@@ -5,7 +5,7 @@
 
 % this creates a new => operator to have the same priority as +
 % seems to make it behave as you would expect.
-% :- op(200, xfx, user:(==>)).
+:- op(200, xfx, user:(==>)).
 
 % ==>(foo,bar).
 
@@ -38,10 +38,20 @@ noun(plural, boys).
 noun(singular, girl).
 noun(plural, girls).
 
+adjacent(boy, boys).
+adjacent(apple, apples).
+adjacent(girl, girls).
+
+find_singular(Noun, Output) :- noun(singular, Noun), !, Output = Noun.
+find_singular(Noun, Output) :- noun(plural, Noun), adjacent(Output, Noun).
+
 int_verb(singular, runs).
 int_verb(plural, run).
 int_verb(singular, dances).
 int_verb(plural, dance).
+
+adjacent(runs, run).
+adjacent(dances, dance).
 
 trans_verb(singular, likes).
 trans_verb(plural, like).
@@ -50,14 +60,45 @@ trans_verb(plural, hate).
 trans_verb(singular, respects).
 trans_verb(plural, respect).
 
+adjacent(likes, like).
+adjacent(hates, hate).
+adjacent(respects, respect).
+
 qualifier(_, some).
 qualifier(plural, all).
 
 relative(that).
 relative(which).
 
-translate(statement(NT,VT), Output).
+translate(statement(NT,VT), Output) :-
+	translate_np(NT, 1, N2, VPF, Output),
+	translate_vp(VT, 1, N2, _, VPF). 
 
+translate_np(some(noun(Noun)), N, N1, VPF, exists(N, Restr+VPF)) :-
+	N1 is N + 1,
+	find_singular(Noun, Singular),
+	Restr =.. [Singular, N].
 
+translate_np(all(noun(Noun)), N, N1, VPF, all(N, Restr==>VPF)) :-
+	N1 is N + 1,
+	find_singular(Noun, Singular),
+	Restr =.. [Singular, N].
 
+translate_np(some(relcl(noun(Noun), VP)), N, N1, VPF, exists(N, Restr+Relcl+VPF)) :-
+	N1 is N + 1,
+	find_singular(Noun, Singular),
+	Restr =.. [Singular, N],
+	translate_vp(VP, N, N1, _, Relcl).
 
+translate_np(all(relcl(noun(Noun), VP)), N, N1, VPF, all(N, (Restr+Relcl)==>VPF)) :-
+	N1 is N + 1,
+	find_singular(Noun, Singular),
+	Restr =.. [Singular, N],
+	ranslate_vp(VP, N, N1, _, Relcl).
+
+translate_vp(verb(Verb), SubjVar, N, N, VerbF) :-,
+	VerbF =.. [Verb, SubjVar].
+
+translate_vp(verb(Verb, ObjNP), SubjVar, N, N2, ObjF) :-
+	VerbApp =.. [Verb, SubjVar, N],
+	translate_np(ObjNP, N, N2, VerbApp, ObjF). 
