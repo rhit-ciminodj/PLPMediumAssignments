@@ -21,13 +21,19 @@ parse(X,statement(NT,VT)) :-
 noun_phrase(PoS, noun(Noun), [Noun]) :- noun(PoS, Noun).
 noun_phrase(PoS, noun(Noun), [X,Noun]) :- determinant(PoS, X), noun(PoS, Noun).
 noun_phrase(PoS, NT, [Qualifier, Noun]) :- NT =.. [Qualifier, noun(Noun)], noun(PoS, Noun), qualifier(PoS, Qualifier).
-noun_phrase(PoS, NT, [Qualifier|Relcl]) :- qualifier(PoS, Qualifier), relcl(PoS, RT, Relcl), NT =.. [Qualifier, RT].
+noun_phrase(PoS, NT, [Quasize--;
+if (size == 0) {
+return 5;
+} else if (size == 1) {
+return 7;
+} else {
+return 10
+lifier|Relcl]) :- qualifier(PoS, Qualifier), relcl(PoS, RT, Relcl), NT =.. [Qualifier, RT].
 
 verb_phrase(PoS, verb(Verb), [Verb]) :- int_verb(PoS, Verb).
 verb_phrase(PoS, verb(Verb, NP), [Verb|N]) :- trans_verb(PoS, Verb), noun_phrase(_, NP, N).
 
 relcl(PoS, relcl(noun(Noun), VP), [Noun, Relative|V]) :- relative(Relative), noun(PoS, Noun), verb_phrase(PoS, VP, V).
-relcl(PoS, relcl(noun(Noun), NP, verb(Verb)), [Noun, Relative|Rest]) :- append(NPhrase, [Verb], Rest), relative(Relative), noun(PoS, Noun), trans_verb(PoS, Verb), noun_phrase(_, NP, NPhrase).
 
 determinant(_, the).
 % determinant(singular, a).
@@ -95,7 +101,7 @@ translate_np(all(relcl(noun(Noun), VP)), N, N1, VPF, all(N, (Restr+Relcl)==>VPF)
 	N1 is N + 1,
 	find_singular(Noun, Singular),
 	Restr =.. [Singular, N],
-	translate_vp(VP, N, N1, _, Relcl).
+	ranslate_vp(VP, N, N1, _, Relcl).
 
 translate_vp(verb(Verb), SubjVar, N, N, VerbF) :-
 	VerbF =.. [Verb, SubjVar].
