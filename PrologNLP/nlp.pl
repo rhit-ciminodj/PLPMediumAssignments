@@ -112,4 +112,20 @@ translate_vp(verb(Verb), SubjVar, N, N, VerbF) :-
 translate_vp(verb(Verb, ObjNP), SubjVar, N, N2, ObjF) :-
 	find_verb(Verb, Output),
 	VerbApp =.. [Output, SubjVar, N],
-	translate_np(ObjNP, N, N2, VerbApp, ObjF). 
+	translate_np(ObjNP, N, N2, VerbApp, ObjF).
+
+concat_char(Chars, '\n', Z) :- Z = Chars.
+concat_char(Chars, X, Z) :- get_char(Y), concat_char([X|Chars], Y, Z).
+
+get_string(X) :- get_char(Y), concat_char([], Y, Z), reverse(Z, R), atom_chars(X, R), !.
+
+split_helper([], _, Acc, Output) :- !, reverse(Acc, Y), atom_chars(X, Y), Output = [X].
+split_helper([Seperator|Chars], Seperator, Acc, Output) :- !, split_helper(Chars, Seperator, [], X), reverse(Acc, Z), atom_chars(Y, Z), Output = [Y|X].
+split_helper([First|Chars], Seperator, Acc, Output) :- split_helper(Chars, Seperator, [First|Acc], Output).
+
+split(Atom, Seperator, Output) :- atom_chars(Atom, Chars), split_helper(Chars, Seperator, [], Output).
+
+process_input(done) :- !.
+process_input(Input) :- split(Input, ' ', Words), parse(Words, Statement), translate(Statement, Output), write(Output), !, do_nlp.
+
+do_nlp :- get_string(Input),
