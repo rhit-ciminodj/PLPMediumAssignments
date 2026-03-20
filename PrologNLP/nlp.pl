@@ -46,6 +46,12 @@ adjacent(girl, girls).
 find_singular(Noun, Output) :- noun(singular, Noun), !, Output = Noun.
 find_singular(Noun, Output) :- noun(plural, Noun), adjacent(Output, Noun).
 
+find_verb(Verb, Output) :- int_verb(plural, Verb), !, Output = Verb.
+find_verb(Verb, Output) :- trans_verb(plural, Verb), !, Output = Verb.
+
+find_verb(Verb, Output) :- int_verb(singular, Verb), adjacent(Verb, Output).
+find_verb(Verb, Output) :- trans_verb(singular, Verb), adjacent(Verb, Output).
+
 int_verb(singular, runs).
 int_verb(plural, run).
 int_verb(singular, dances).
@@ -97,9 +103,13 @@ translate_np(all(relcl(noun(Noun), VP)), N, N1, VPF, all(N, (Restr+Relcl)==>VPF)
 	Restr =.. [Singular, N],
 	translate_vp(VP, N, N1, _, Relcl).
 
+translate_np(all(relcl(noun(Noun), 
+
 translate_vp(verb(Verb), SubjVar, N, N, VerbF) :-
-	VerbF =.. [Verb, SubjVar].
+	find_verb(Verb, Output),
+	VerbF =.. [Output, SubjVar].
 
 translate_vp(verb(Verb, ObjNP), SubjVar, N, N2, ObjF) :-
-	VerbApp =.. [Verb, SubjVar, N],
+	find_verb(Verb, Output),
+	VerbApp =.. [Output, SubjVar, N],
 	translate_np(ObjNP, N, N2, VerbApp, ObjF). 
