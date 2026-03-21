@@ -140,6 +140,6 @@ split_helper([First|Chars], Seperator, Acc, Output) :- split_helper(Chars, Seper
 split(Atom, Seperator, Output) :- atom_chars(Atom, Chars), split_helper(Chars, Seperator, [], Output).
 
 process_input(done) :- !.
-process_input(Input) :- split(Input, ' ', Words), parse(Words, Statement), translate(Statement, Output), write(Output), !, do_nlp.
+process_input(Input) :- split(Input, ' ', Words), parse(Words, Statement), translate(Statement, Output), write(Output), write('\n'), !, do_nlp.
 
-do_nlp :- get_string(Input),
+do_nlp :- get_string(Input), process_input(Input).
