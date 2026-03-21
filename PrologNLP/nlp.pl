@@ -103,7 +103,21 @@ translate_np(all(relcl(noun(Noun), VP)), N, N1, VPF, all(N, (Restr+Relcl)==>VPF)
 	Restr =.. [Singular, N],
 	translate_vp(VP, N, N1, _, Relcl).
 
-translate_np(all(relcl(noun(Noun), 
+translate_np(all(relcl(noun(Noun), NP, verb(Verb))), N, N2, VPF, all(N, (Restr+Relcl)==>VPF)) :-
+	N1 is N + 1,
+	find_singular(Noun, Singular),
+	Restr =.. [Singular, N],
+	find_verb(Verb, Output),
+	VerbApp =.. [Output, N1, N],
+	translate_np(NP, N1, N2, VerbApp, Relcl).
+
+translate_np(some(relcl(noun(Noun), NP, verb(Verb))), N, N2, VPF, exists(N, Restr+Relcl+VPF)) :-
+	N1 is N + 1,
+	find_singular(Noun, Singular),
+	Restr =.. [Singular, N],
+	find_verb(Verb, Output),
+	VerbApp =.. [Output, N1, N],
+	translate_np(NP, N1, N2, VerbApp, Relcl).
 
 translate_vp(verb(Verb), SubjVar, N, N, VerbF) :-
 	find_verb(Verb, Output),
