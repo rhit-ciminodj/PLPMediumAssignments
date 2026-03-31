@@ -1,5 +1,5 @@
 -module(raft).
--export([start_raft_member/1,start_raft_members/1,append_log/3,make_leader/1,get_log/1,disable_member/1, enable_member/1]).
+-export([start_raft_member/1,start_raft_members/1,append_log/3,make_leader/1,get_log/1,disable_member/1, enable_member/1, get_term/1, get_commit_index/1]).
 -include_lib("eunit/include/eunit.hrl").
 
 
@@ -38,27 +38,33 @@
 % http://www.erlang.org/doc/reference_manual/processes.html
 
 start_raft_member(UniqueId) ->
-    Pid = spawn(fun() -> raft_loop([]) end),
+    Pid = spawn(fun() -> raft_loop([], 0, 0) end),
     register(UniqueId, Pid).
 
-raft_loop(TupleList) ->
+raft_loop(TupleList, LastCommit, CurrentTerm) ->
 	receive
 		{appendLog, Num, Something} -> 
-			raft_loop([{Num, Something}|TupleList]);
+			raft_loop([{Num, Something}|TupleList], LastCommit, CurrentTerm);
 		{getLog, Requestor} -> 
 			Requestor ! {reply, TupleList},
-			raft_loop(TupleList);
+			raft_loop(TupleList, LastCommit, CurrentTerm);
 		{killme} -> 
-			death_loop(TupleList)
+			death_loop(TupleList, LastCommit, CurrentTerm);
+		{getCommit, Requestor} ->
+			Requestor ! {commit, LastCommit},
+			raft_loop(TupleList, LastCommit, CurrentTerm);
+		{getTerm, Requestor} ->
+			Requestor ! {term, CurrentTerm},
+			raft_loop(TupleList, LastCommit, CurrentTerm)
 
 	end.
 
-death_loop(TupleList) ->
+death_loop(TupleList, LastCommit, CurrentTerm) ->
 	receive
 		{reviveme} ->
-			raft_loop(TupleList);
+			raft_loop(TupleList, LastCommit, CurrentTerm);
 		_ ->
-			death_loop(TupleList)
+			death_loop(TupleList, LastCommit, CurrentTerm)
 	end.
 
 			
@@ -176,10 +182,17 @@ get_enable_disable_test_() ->
 % in the Raft protocol.
 
 get_term(Id) ->
-    solveme.
+    Id ! {getTerm, self()},
+    receive 
+		    {term, CurrentTerm} -> CurrentTerm
+    end.
+
 
 get_commit_index(Id) ->
-    solveme.
+    Id ! {getCommit, self()},
+    receive 
+		    {commit, LastCommit} -> LastCommit
+    end.
 
 
 get_term_and_ci_test_() ->
