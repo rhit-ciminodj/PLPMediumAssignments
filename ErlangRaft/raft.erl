@@ -99,6 +99,7 @@ append_new_entries(Map, CurrentLogIndex, [Entry|Rest]) ->
 	end.
 
 
+find_conflict(_, 1, _) -> empty;
 find_conflict(_, _, []) -> none;
 find_conflict(Map, Index, [{EntryTerm, _}|Rest]) ->
 	case maps:get(Index, Map, undefined) of
@@ -106,10 +107,12 @@ find_conflict(Map, Index, [{EntryTerm, _}|Rest]) ->
 		_ -> find_conflict(Map, Index + 1, Rest)
 	end.
 
+remove_from(_, empty, _) -> #{};
 remove_from(Map, none, _) -> Map;
 remove_from(Map, StartIndex, EndIndex) when StartIndex > EndIndex -> Map;
 remove_from(Map, StartIndex, EndIndex) ->
-	remove_from(maps:remove(StartIndex, Map), StartIndex + 1, EndIndex).
+	TrimMap = maps:remove(StartIndex, Map),
+	remove_from(TrimMap, StartIndex + 1, EndIndex).
 
 						
 
