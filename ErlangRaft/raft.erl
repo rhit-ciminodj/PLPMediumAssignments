@@ -38,33 +38,87 @@
 % http://www.erlang.org/doc/reference_manual/processes.html
 
 start_raft_member(UniqueId) ->
-    Pid = spawn(fun() -> raft_loop([], 0, 0) end),
+    Map = #{},
+    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0) end),
     register(UniqueId, Pid).
 
-raft_loop(TupleList, LastCommit, CurrentTerm) ->
+raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex) ->
 	receive
 		{appendLog, Num, Something} -> 
-			raft_loop([{Num, Something}|TupleList], LastCommit, CurrentTerm);
+			NewIndex = CurrentIndex + 1,
+			NewMap = maps:put(NewIndex, {Num, Something}, Map),
+			raft_loop(NewMap, LastCommit, CurrentTerm, NewIndex);
 		{getLog, Requestor} -> 
-			Requestor ! {reply, TupleList},
-			raft_loop(TupleList, LastCommit, CurrentTerm);
+			Sorted = lists:sort(maps:to_list(Map)),
+			Log = [Value || {_, Value} <- Sorted],
+			Requestor ! {reply, Log},
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
 		{killme} -> 
-			death_loop(TupleList, LastCommit, CurrentTerm);
+			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
 		{getCommit, Requestor} ->
 			Requestor ! {commit, LastCommit},
-			raft_loop(TupleList, LastCommit, CurrentTerm);
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
 		{getTerm, Requestor} ->
 			Requestor ! {term, CurrentTerm},
-			raft_loop(TupleList, LastCommit, CurrentTerm)
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+		{append_entry, Term, PrevLogIndex, PrevLogTerm, Entries, LeaderCommit, Requestor} ->
+			if
+				Term < CurrentTerm -> 
+					Requestor ! {CurrentTerm, false},
+					raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+				true ->
+					{EntryTerm, _} = maps:get(PrevLogIndex, Map, {-1, undefined}),
+					if PrevLogIndex > 0 andalso EntryTerm =/= PrevLogTerm ->
+						   Requestor ! {Term, false},
+						   raft_loop(Map, LastCommit, Term, CurrentIndex);
+					   true ->
+						   ConflictIndex = find_conflict(Map, PrevLogIndex + 1, Entries),
+						   TrimMap = remove_from(Map, ConflictIndex, CurrentIndex),
+						   NewMap = append_new_entries(TrimMap, PrevLogIndex + 1, Entries),
+						   NewIndex = PrevLogIndex + length(Entries),
+						   NewCommit = if
+								       LeaderCommit > LastCommit -> min(LeaderCommit, NewIndex);
+								       true -> LastCommit
+							       end,
+						   Requestor ! {Term, true},
+						   raft_loop(NewMap, NewCommit, Term, NewIndex)
 
+
+					end
+			end
 	end.
 
-death_loop(TupleList, LastCommit, CurrentTerm) ->
+append_new_entries(Map, _, []) -> Map;
+append_new_entries(Map, CurrentLogIndex, [Entry|Rest]) -> 
+	case maps:get(CurrentLogIndex, Map, undefined) of
+		undefined ->
+			NewMap = maps:put(CurrentLogIndex, Entry, Map),
+			append_new_entries(NewMap, CurrentLogIndex + 1, Rest);
+		_ ->
+			append_new_entries(Map, CurrentLogIndex + 1, Rest)
+	end.
+
+
+find_conflict(_, _, []) -> none;
+find_conflict(Map, Index, [{EntryTerm, _}|Rest]) ->
+	case maps:get(Index, Map, undefined) of
+		{ExistingTerm, _} when ExistingTerm =/= EntryTerm -> Index;
+		_ -> find_conflict(Map, Index + 1, Rest)
+	end.
+
+remove_from(Map, none, _) -> Map;
+remove_from(Map, StartIndex, EndIndex) when StartIndex > EndIndex -> Map;
+remove_from(Map, StartIndex, EndIndex) ->
+	remove_from(maps:remove(StartIndex, Map), StartIndex + 1, EndIndex).
+
+						
+
+death_loop(Map, LastCommit, CurrentTerm, CurrentIndex) ->
 	receive
 		{reviveme} ->
-			raft_loop(TupleList, LastCommit, CurrentTerm);
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
 		_ ->
-			death_loop(TupleList, LastCommit, CurrentTerm)
+			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex)
 	end.
 
 			
@@ -222,7 +276,11 @@ append_entries(Id,
                PrevLogTerm,
                Entries, % these will be of the form {Term,data} because you can get data from other terms
                LeaderCommit) ->
-    solveme.
+    Id ! {append_entry, Term, PrevLogIndex, PrevLogTerm, Entries, LeaderCommit, self()},
+    receive 
+	    {ReplyTerm, true} -> {ReplyTerm, true};
+	    {ReplyTerm, false} -> {ReplyTerm, false}
+    end.	
 
 
 % case 1: term is higher, prevs match, so data is added
