@@ -39,38 +39,47 @@
 
 start_raft_member(UniqueId) ->
     Map = #{},
-    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0) end),
+    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0, false, []) end),
     register(UniqueId, Pid).
 
-raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex) ->
+raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members) ->
 	receive
 		{appendLog, Num, Something} -> 
 			NewIndex = CurrentIndex + 1,
 			NewMap = maps:put(NewIndex, {Num, Something}, Map),
-			raft_loop(NewMap, LastCommit, CurrentTerm, NewIndex);
+			raft_loop(NewMap, LastCommit, CurrentTerm, NewIndex, IsLeader, Members);
 		{getLog, Requestor} -> 
 			Sorted = lists:sort(maps:to_list(Map)),
 			Log = [Value || {_, Value} <- Sorted],
 			Requestor ! {reply, Log},
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members);
 		{killme} -> 
-			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members);
 		{getCommit, Requestor} ->
 			Requestor ! {commit, LastCommit},
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members);
 		{getTerm, Requestor} ->
 			Requestor ! {term, CurrentTerm},
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members);
+		{nepotism} ->
+			lists:foreach(fun(Member) -> Member ! {append_entry, CurrentTerm + 1, CurrentIndex, CurrentTerm, [], LastCommit, self()} end, Members),
+			raft_loop(Map, LastCommit, CurrentTerm + 1, CurrentIndex, true, Members);
+		{spreadMisinformation, NewE:ntryData} ->
+			if
+				IsLeader ->
+					{PrevLogTerm, _} = maps:get(CurrentIndex, Map),
+					{NewMap, NewIndex} = append_new_entires_leader(Map, CurrentTerm, CurrentIndex, NewEntryData),
+					Member ! {append_entry, CurrentTerm, CurrentIndex, PrevLogTerm, NewEntryData, LastCommit + 1, 
 		{append_entry, Term, PrevLogIndex, PrevLogTerm, Entries, LeaderCommit, Requestor} ->
 			if
 				Term < CurrentTerm -> 
 					Requestor ! {CurrentTerm, false},
-					raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+					raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members);
 				true ->
 					{EntryTerm, _} = maps:get(PrevLogIndex, Map, {-1, undefined}),
 					if PrevLogIndex > 0 andalso EntryTerm =/= PrevLogTerm ->
 						   Requestor ! {Term, false},
-						   raft_loop(Map, LastCommit, Term, CurrentIndex);
+						   raft_loop(Map, LastCommit, Term, CurrentIndex, IsLeader, Members);
 					   true ->
 						   ConflictIndex = find_conflict(Map, PrevLogIndex + 1, Entries),
 						   TrimMap = remove_from(Map, ConflictIndex, CurrentIndex),
@@ -81,12 +90,17 @@ raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex) ->
 								       true -> LastCommit
 							       end,
 						   Requestor ! {Term, true},
-						   raft_loop(NewMap, NewCommit, Term, NewIndex)
-
+						   raft_loop(NewMap, NewCommit, Term, NewIndex, IsLeader, Members)
 
 					end
 			end
 	end.
+
+append_new_entries_leader(Map, _, FinalIndex, []) -> {Map, FinalIndex};
+append_new_entries_leader(Map, LeaderTerm, CurrentIndex, [Entry|Rest]) ->
+	NewIndex = CurrentIndex + 1,
+	NewMap = maps:put(NewIndex, {LeaderTerm, Entry}),
+	append_new_entires_leader(NewMap, LeaderTerm, NewIndex, Rest).
 
 append_new_entries(Map, _, []) -> Map;
 append_new_entries(Map, CurrentLogIndex, [Entry|Rest]) -> 
@@ -116,12 +130,12 @@ remove_from(Map, StartIndex, EndIndex) ->
 
 						
 
-death_loop(Map, LastCommit, CurrentTerm, CurrentIndex) ->
+death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members) ->
 	receive
 		{reviveme} ->
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex);
+			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members);
 		_ ->
-			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex)
+			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members)
 	end.
 
 			
@@ -449,12 +463,19 @@ ae_hist5_test_() ->
 % some process a leader that could not normally be elected could cause
 % data to be lost.
 make_leader(Id) ->
-    solveme.
+    Id ! {nepotism}.
 
 % This is the equivalent of start_raft_member, except all the raft
 % members should be initalized to know about each other.
 start_raft_members(ListOfUniqueIds) ->
-    solveme.
+    lists:foreach(fun(CurrentId) -> 
+				  OtherMembers = lists:filter(fun(Item) -> Item =/= CurrentId end, ListOfUniqueIds),
+				  start_raft_members_helper(CurrentId, OtherMembers) end, ListOfUniqueIds).
+
+start_raft_members_helper(UniqueId, Members) ->
+    Map = #{},
+    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0, false, Members) end),
+    register(UniqueId, Pid).
 
 
 ld_1_test_() ->
@@ -477,7 +498,7 @@ ld_1_test_() ->
 % will work fine for us in this regard.
 
 new_entry(Id, NewEntryData) ->
-    solveme.
+    Id ! {spreadMisinformation, NewEntryData}.
 
 ld_2_test_() ->
     testme(?_test([make_leader(m1),
