@@ -64,12 +64,16 @@ raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members) ->
 		{nepotism} ->
 			lists:foreach(fun(Member) -> Member ! {append_entry, CurrentTerm + 1, CurrentIndex, CurrentTerm, [], LastCommit, self()} end, Members),
 			raft_loop(Map, LastCommit, CurrentTerm + 1, CurrentIndex, true, Members);
-		{spreadMisinformation, NewE:ntryData} ->
+		{spreadMisinformation, NewEntryData} ->
 			if
 				IsLeader ->
-					{PrevLogTerm, _} = maps:get(CurrentIndex, Map),
-					{NewMap, NewIndex} = append_new_entires_leader(Map, CurrentTerm, CurrentIndex, NewEntryData),
-					Member ! {append_entry, CurrentTerm, CurrentIndex, PrevLogTerm, NewEntryData, LastCommit + 1, 
+					{PrevLogTerm, _} = maps:get(CurrentIndex, Map, {-1, undefined}),
+					{NewMap, NewIndex, FullEntries} = append_new_entries_leader(Map, CurrentTerm, CurrentIndex, NewEntryData, []),
+          lists:foreach(fun(Member) -> Member ! {append_entry, CurrentTerm, CurrentIndex, PrevLogTerm, FullEntries, LastCommit + 1, self()} end, Members),
+          raft_loop(NewMap, LastCommit + 1, CurrentTerm, NewIndex, IsLeader, Members);
+        true ->
+          raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members)
+      end;
 		{append_entry, Term, PrevLogIndex, PrevLogTerm, Entries, LeaderCommit, Requestor} ->
 			if
 				Term < CurrentTerm -> 
@@ -96,11 +100,13 @@ raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members) ->
 			end
 	end.
 
-append_new_entries_leader(Map, _, FinalIndex, []) -> {Map, FinalIndex};
-append_new_entries_leader(Map, LeaderTerm, CurrentIndex, [Entry|Rest]) ->
+append_new_entries_leader(Map, _, FinalIndex, [], FullEntries) -> {Map, FinalIndex, FullEntries};
+append_new_entries_leader(Map, LeaderTerm, CurrentIndex, [Entry|Rest], FullEntries) ->
 	NewIndex = CurrentIndex + 1,
-	NewMap = maps:put(NewIndex, {LeaderTerm, Entry}),
-	append_new_entires_leader(NewMap, LeaderTerm, NewIndex, Rest).
+  FullEntry = {LeaderTerm, Entry},
+	NewMap = maps:put(NewIndex, FullEntry, Map),
+  NewFullEntries = [FullEntry|FullEntries],
+	append_new_entries_leader(NewMap, LeaderTerm, NewIndex, Rest, NewFullEntries).
 
 append_new_entries(Map, _, []) -> Map;
 append_new_entries(Map, CurrentLogIndex, [Entry|Rest]) -> 
@@ -498,7 +504,7 @@ ld_1_test_() ->
 % will work fine for us in this regard.
 
 new_entry(Id, NewEntryData) ->
-    Id ! {spreadMisinformation, NewEntryData}.
+    Id ! {spreadMisinformation, [NewEntryData]}.
 
 ld_2_test_() ->
     testme(?_test([make_leader(m1),
