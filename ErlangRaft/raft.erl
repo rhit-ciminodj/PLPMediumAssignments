@@ -39,84 +39,161 @@
 
 start_raft_member(UniqueId) ->
     Map = #{},
-    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0, false, [], 1) end),
+    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0, false, [], 0, #{}, #{}, undefined) end),
     register(UniqueId, Pid).
 
-raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals) ->
+raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef) ->
 	receive
+        heartbeat ->
+            if
+                IsLeader ->
+                    send_replication(Members, Map, CurrentTerm, CurrentIndex, LastCommit, NextIndexMap),
+                    erlang:send_after(1, self(), heartbeat),
+                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
+                true ->
+                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef)
+            end;
 		{appendLog, Num, Something} -> 
 			NewIndex = CurrentIndex + 1,
 			NewMap = maps:put(NewIndex, {Num, Something}, Map),
-			raft_loop(NewMap, LastCommit, CurrentTerm, NewIndex, IsLeader, Members, Approvals);
+            raft_loop(NewMap, LastCommit, CurrentTerm, NewIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 		{getLog, Requestor} -> 
 			Sorted = lists:sort(maps:to_list(Map)),
 			Log = [Value || {_, Value} <- Sorted],
 			Requestor ! {reply, Log},
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals);
+            raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 		{killme} -> 
-			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals);
+            death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 		{getCommit, Requestor} ->
 			Requestor ! {commit, LastCommit},
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals);
+            raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 		{getTerm, Requestor} ->
 			Requestor ! {term, CurrentTerm},
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals);
+            raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 		{nepotism} ->
-			lists:foreach(fun(Member) -> Member ! {append_entry, CurrentTerm + 1, CurrentIndex, CurrentTerm, [], LastCommit, self()} end, Members),
-			raft_loop(Map, LastCommit, CurrentTerm + 1, CurrentIndex, true, Members, Approvals);
+            NewTerm = CurrentTerm + 1,
+            NewNextIndexMap = maps:from_list([{Member, CurrentIndex + 1} || Member <- Members]),
+            NewMatchIndexMap = maps:from_list([{Member, 0} || Member <- Members]),
+            send_replication(Members, Map, NewTerm, CurrentIndex, LastCommit, NewNextIndexMap),
+            erlang:send_after(1, self(), heartbeat),
+            raft_loop(Map, LastCommit, NewTerm, CurrentIndex, true, Members, 0, NewNextIndexMap, NewMatchIndexMap, self());
 		{spreadMisinformation, NewEntryData} ->
 			if
 				IsLeader ->
-					{PrevLogTerm, _} = maps:get(CurrentIndex, Map, {-1, undefined}),
-					{NewMap, NewIndex, FullEntries} = append_new_entries_leader(Map, CurrentTerm, CurrentIndex, NewEntryData, []),
-          lists:foreach(fun(Member) -> Member ! {append_entry, CurrentTerm, CurrentIndex, PrevLogTerm, FullEntries, LastCommit, self()} end, Members),
-          raft_loop(NewMap, LastCommit, CurrentTerm, NewIndex, IsLeader, Members, 1);
-        true ->
-          raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals)
-      end;
+                    {NewMap, NewIndex, _FullEntries} = append_new_entries_leader(Map, CurrentTerm, CurrentIndex, NewEntryData, []),
+                    send_replication(Members, NewMap, CurrentTerm, NewIndex, LastCommit, NextIndexMap),
+                    raft_loop(NewMap, LastCommit, CurrentTerm, NewIndex, IsLeader, Members, 0, NextIndexMap, MatchIndexMap, LeaderRef);
+                true ->
+                    case LeaderRef of
+                        undefined -> ok;
+                        _ -> LeaderRef ! {spreadMisinformation, NewEntryData}
+                    end,
+                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef)
+            end;
 		{append_entry, Term, PrevLogIndex, PrevLogTerm, Entries, LeaderCommit, Requestor} ->
 			if
-				Term < CurrentTerm -> 
-					Requestor ! {append_entry_response, CurrentTerm, false},
-					raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals);
+                Term < CurrentTerm ->
+                    Requestor ! {append_entry_response, CurrentTerm, false, registered_id()},
+                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, false, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 				true ->
 					{EntryTerm, _} = maps:get(PrevLogIndex, Map, {-1, undefined}),
-					if PrevLogIndex > 0 andalso EntryTerm =/= PrevLogTerm ->
-						   Requestor ! {append_entry_response, Term, false},
-						   raft_loop(Map, LastCommit, Term, CurrentIndex, IsLeader, Members, Approvals);
-					   true ->
-						   ConflictIndex = find_conflict(Map, PrevLogIndex + 1, Entries),
-						   TrimMap = remove_from(Map, ConflictIndex, CurrentIndex),
-						   NewMap = append_new_entries(TrimMap, PrevLogIndex + 1, Entries),
-						   NewIndex = PrevLogIndex + length(Entries),
-						   NewCommit = if
-								       LeaderCommit > LastCommit -> min(LeaderCommit, NewIndex);
-								       true -> LastCommit
-							       end,
-						   Requestor ! {append_entry_response, Term, true},
-						   raft_loop(NewMap, NewCommit, Term, NewIndex, IsLeader, Members, Approvals)
+                    if PrevLogIndex > 0 andalso EntryTerm =/= PrevLogTerm ->
+                        Requestor ! {append_entry_response, Term, false, registered_id()},
+                        raft_loop(Map, LastCommit, Term, CurrentIndex, false, Members, Approvals, NextIndexMap, MatchIndexMap, Requestor);
+                       true ->
+                        ConflictIndex = find_conflict(Map, PrevLogIndex + 1, Entries),
+                        TrimMap = remove_from(Map, ConflictIndex, CurrentIndex),
+                        NewMap = append_new_entries(TrimMap, PrevLogIndex + 1, Entries),
+                        NewIndex = map_max_index(NewMap),
+                        NewCommit = if
+                                   LeaderCommit > LastCommit -> min(LeaderCommit, NewIndex);
+                                   true -> LastCommit
+                               end,
+                        Requestor ! {append_entry_response, Term, true, registered_id()},
+                        raft_loop(NewMap, NewCommit, Term, NewIndex, false, Members, Approvals, NextIndexMap, MatchIndexMap, Requestor)
 
-					end
+                    end
 			end;
-    {append_entry_response, _, Success} ->
-      NewApprovals = Approvals + 1,
-      NeededApprovals = (length(Members) + 1) / 2,
-      if Approvals =:= 0 or (not Success) -> 
-             raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals);
-         NewApprovals > NeededApprovals ->
-             raft_loop(Map, LastCommit + 1, CurrentTerm, CurrentIndex, IsLeader, Members, 0);
-         true ->
-             raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals + 1)
-      end 
+        {append_entry_response, _, Success, From} ->
+            case {IsLeader, maps:is_key(From, NextIndexMap), Success} of
+                {true, true, true} ->
+                    UpdatedMatch = maps:put(From, CurrentIndex, MatchIndexMap),
+                    UpdatedNext = maps:put(From, CurrentIndex + 1, NextIndexMap),
+                    MajorityCommit = compute_majority_commit(UpdatedMatch, CurrentIndex, length(Members)),
+                    NewCommit = max(LastCommit, MajorityCommit),
+                    if
+                        NewCommit > LastCommit -> send_replication(Members, Map, CurrentTerm, CurrentIndex, NewCommit, UpdatedNext);
+                        true -> ok
+                    end,
+                    raft_loop(Map, NewCommit, CurrentTerm, CurrentIndex, IsLeader, Members, 0, UpdatedNext, UpdatedMatch, LeaderRef);
+                {true, true, false} ->
+                    CurrentNext = maps:get(From, NextIndexMap),
+                    RetriedNext = max(1, CurrentNext - 1),
+                    UpdatedNext = maps:put(From, RetriedNext, NextIndexMap),
+                    send_replication_to_member(From, Map, CurrentTerm, CurrentIndex, LastCommit, UpdatedNext),
+                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, UpdatedNext, MatchIndexMap, LeaderRef);
+                _ ->
+                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef)
+            end;
+        {append_entry_response, _, _} ->
+            raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef)
 	end.
 
-append_new_entries_leader(Map, _, FinalIndex, [], FullEntries) -> {Map, FinalIndex, FullEntries};
+append_new_entries_leader(Map, _, FinalIndex, [], FullEntries) -> {Map, FinalIndex, lists:reverse(FullEntries)};
 append_new_entries_leader(Map, LeaderTerm, CurrentIndex, [Entry|Rest], FullEntries) ->
 	NewIndex = CurrentIndex + 1,
   FullEntry = {LeaderTerm, Entry},
 	NewMap = maps:put(NewIndex, FullEntry, Map),
   NewFullEntries = [FullEntry|FullEntries],
 	append_new_entries_leader(NewMap, LeaderTerm, NewIndex, Rest, NewFullEntries).
+
+registered_id() ->
+    case process_info(self(), registered_name) of
+        {registered_name, []} -> self();
+        {registered_name, Name} -> Name
+    end.
+
+map_max_index(Map) ->
+    case maps:keys(Map) of
+        [] -> 0;
+        Keys -> lists:max(Keys)
+    end.
+
+send_replication(Members, Map, CurrentTerm, CurrentIndex, LeaderCommit, NextIndexMap) ->
+    lists:foreach(fun(Member) ->
+        send_replication_to_member(Member, Map, CurrentTerm, CurrentIndex, LeaderCommit, NextIndexMap)
+    end, Members).
+
+send_replication_to_member(Member, Map, CurrentTerm, CurrentIndex, LeaderCommit, NextIndexMap) ->
+    NextIndex = maps:get(Member, NextIndexMap, CurrentIndex + 1),
+    PrevLogIndex = NextIndex - 1,
+    {PrevLogTerm, _} = maps:get(PrevLogIndex, Map, {-1, undefined}),
+    Entries = get_entries_from(Map, NextIndex, CurrentIndex),
+    Member ! {append_entry, CurrentTerm, PrevLogIndex, PrevLogTerm, Entries, LeaderCommit, self()}.
+
+get_entries_from(_, StartIndex, EndIndex) when StartIndex > EndIndex ->
+    [];
+get_entries_from(Map, StartIndex, EndIndex) ->
+    case maps:get(StartIndex, Map, undefined) of
+        undefined ->
+            [];
+        Entry ->
+            [Entry | get_entries_from(Map, StartIndex + 1, EndIndex)]
+    end.
+
+compute_majority_commit(MatchIndexMap, CurrentIndex, FollowerCount) ->
+    AllMatches = [CurrentIndex | maps:values(MatchIndexMap)],
+    Needed = ((FollowerCount + 1) div 2) + 1,
+    compute_majority_commit_from_matches(AllMatches, CurrentIndex, Needed).
+
+compute_majority_commit_from_matches(_, Candidate, _) when Candidate =< 0 ->
+    0;
+compute_majority_commit_from_matches(AllMatches, Candidate, Needed) ->
+    Count = length([Match || Match <- AllMatches, Match >= Candidate]),
+    if
+        Count >= Needed -> Candidate;
+        true -> compute_majority_commit_from_matches(AllMatches, Candidate - 1, Needed)
+    end.
 
 append_new_entries(Map, _, []) -> Map;
 append_new_entries(Map, CurrentLogIndex, [Entry|Rest]) -> 
@@ -146,12 +223,12 @@ remove_from(Map, StartIndex, EndIndex) ->
 
 						
 
-death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals) ->
+death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef) ->
 	receive
 		{reviveme} ->
-			raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals);
+            raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 		_ ->
-			death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals)
+            death_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef)
 	end.
 
 			
@@ -312,7 +389,9 @@ append_entries(Id,
     Id ! {append_entry, Term, PrevLogIndex, PrevLogTerm, Entries, LeaderCommit, self()},
     receive 
 	    {append_entry_response, ReplyTerm, true} -> {ReplyTerm, true};
-	    {append_entry_response, ReplyTerm, false} -> {ReplyTerm, false}
+	    {append_entry_response, ReplyTerm, false} -> {ReplyTerm, false};
+	    {append_entry_response, ReplyTerm, true, _} -> {ReplyTerm, true};
+	    {append_entry_response, ReplyTerm, false, _} -> {ReplyTerm, false}
     end.	
 
 
@@ -481,6 +560,7 @@ ae_hist5_test_() ->
 make_leader(Id) ->
     Id ! {nepotism}.
 
+
 % This is the equivalent of start_raft_member, except all the raft
 % members should be initalized to know about each other.
 start_raft_members(ListOfUniqueIds) ->
@@ -490,7 +570,7 @@ start_raft_members(ListOfUniqueIds) ->
 
 start_raft_members_helper(UniqueId, Members) ->
     Map = #{},
-    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0, false, Members, 0) end),
+    Pid = spawn(fun() -> raft_loop(Map, 0, 0, 0, false, Members, 0, #{}, #{}, undefined) end),
     register(UniqueId, Pid).
 
 
