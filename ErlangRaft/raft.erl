@@ -94,7 +94,7 @@ raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approva
 			if
                 Term < CurrentTerm ->
                     Requestor ! {append_entry_response, CurrentTerm, false, registered_id()},
-                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, false, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
+                    raft_loop(Map, LastCommit, CurrentTerm, CurrentIndex, IsLeader, Members, Approvals, NextIndexMap, MatchIndexMap, LeaderRef);
 				true ->
 					{EntryTerm, _} = maps:get(PrevLogIndex, Map, {-1, undefined}),
                     if PrevLogIndex > 0 andalso EntryTerm =/= PrevLogTerm ->
