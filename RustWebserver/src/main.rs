@@ -1,5 +1,7 @@
-use std::net::{TcpStream, TcpListener};
 use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::time::Duration;
+use std::{env, thread};
 
 mod fortune;
 mod urlmatcher;
@@ -8,7 +10,7 @@ use urlmatcher::UrlMatcher;
 // adapted from https://gist.github.com/mjohnsullivan/e5182707caf0a9dbdf2d
 
 fn handle_read(mut stream: &TcpStream) -> Option<String> {
-    let mut buf = [0u8 ;4096];
+    let mut buf = [0u8; 4096];
     match stream.read(&mut buf) {
         Ok(_) => {
             let req_str = String::from_utf8_lossy(&buf);
@@ -18,7 +20,7 @@ fn handle_read(mut stream: &TcpStream) -> Option<String> {
             let first_line = req_str.lines().next()?;
             let path = first_line.split_whitespace().nth(1)?;
             Some(path.to_string())
-        },
+        }
         Err(e) => {
             println!("Unable to read stream: {}", e);
             None
@@ -39,12 +41,11 @@ fn handle_client(stream: TcpStream) {
     handle_write(stream);
 }
 
-fn main() {
-
-    let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+fn thread(listener: TcpListener) {
     println!("Listening for connections on port {}", 8080);
 
     for stream in listener.incoming() {
+        thread::sleep(Duration::from_secs(10));
         match stream {
             Ok(stream) => {
                 handle_client(stream);
@@ -54,6 +55,20 @@ fn main() {
             }
         }
     }
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    let arg = args.get(1).expect("you didnt pass an ARG you STUPID");
+    let n_threads: i32 = arg.parse().expect("bro that aint an int");
+
+    let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+
+    for _ in 0..n_threads {
+        let new_listener = listener.try_clone().expect("listener should let us clone");
+        thread::spawn(|| thread(new_listener));
+    }
+    loop {}
 }
 
 // Step 4: Implement this function to match URLs and return content.
@@ -72,9 +87,18 @@ fn test_contact_us() {
 
 #[test]
 fn test_calendar() {
-    assert_eq!(compute_response("/calendar/04/2026"), Some("Calendar for April 2026".to_string()));
-    assert_eq!(compute_response("/calendar/01/2000"), Some("Calendar for January 2000".to_string()));
-    assert_eq!(compute_response("/calendar/12/1999"), Some("Calendar for December 1999".to_string()));
+    assert_eq!(
+        compute_response("/calendar/04/2026"),
+        Some("Calendar for April 2026".to_string())
+    );
+    assert_eq!(
+        compute_response("/calendar/01/2000"),
+        Some("Calendar for January 2000".to_string())
+    );
+    assert_eq!(
+        compute_response("/calendar/12/1999"),
+        Some("Calendar for December 1999".to_string())
+    );
 }
 
 #[test]
