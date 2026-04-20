@@ -1,11 +1,14 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{env, thread};
 
 mod fortune;
 mod urlmatcher;
 use urlmatcher::UrlMatcher;
+
+use crate::fortune::FortuneReader;
 
 // adapted from https://gist.github.com/mjohnsullivan/e5182707caf0a9dbdf2d
 
@@ -28,27 +31,34 @@ fn handle_read(mut stream: &TcpStream) -> Option<String> {
     }
 }
 
-fn handle_write(mut stream: TcpStream) {
-    let response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<html><body>Sure would be cool to have a fortune to display here!</body></html>\r\n";
-    match stream.write(response) {
+fn handle_write(mut stream: TcpStream, reader_mutex: Arc<Mutex<FortuneReader>>) {
+    let fortune = {
+        let mut reader = reader_mutex.lock().unwrap();
+        reader
+            .next_fortune()
+            .expect("oh my god NO FORTUNES? we're COMPLETELY screwed :( :( )")
+    };
+    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<html><body>{fortune}</body></html>\r\n");
+    let response_bytes = response.as_bytes();
+    match stream.write(response_bytes) {
         Ok(_) => println!("Response sent"),
         Err(e) => println!("Failed sending response: {}", e),
     }
 }
 
-fn handle_client(stream: TcpStream) {
+fn handle_client(stream: TcpStream, reader_mutex: Arc<Mutex<FortuneReader>>) {
     let _path = handle_read(&stream);
-    handle_write(stream);
+    handle_write(stream, reader_mutex);
 }
 
-fn thread(listener: TcpListener) {
+fn thread(listener: TcpListener, reader_mutex: Arc<Mutex<FortuneReader>>) {
     println!("Listening for connections on port {}", 8080);
 
     for stream in listener.incoming() {
-        thread::sleep(Duration::from_secs(10));
+        thread::sleep(Duration::from_secs(2));
         match stream {
             Ok(stream) => {
-                handle_client(stream);
+                handle_client(stream, reader_mutex.clone());
             }
             Err(e) => {
                 println!("Unable to connect: {}", e);
@@ -62,11 +72,15 @@ fn main() {
     let arg = args.get(1).expect("you didnt pass an ARG you STUPID");
     let n_threads: i32 = arg.parse().expect("bro that aint an int");
 
+    let reader = FortuneReader::new().unwrap();
+    let reader_mutex = Arc::new(Mutex::new(reader));
+
     let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
 
     for _ in 0..n_threads {
         let new_listener = listener.try_clone().expect("listener should let us clone");
-        thread::spawn(|| thread(new_listener));
+        let reader_mutex_clone = reader_mutex.clone();
+        thread::spawn(|| thread(new_listener, reader_mutex_clone));
     }
     loop {}
 }
