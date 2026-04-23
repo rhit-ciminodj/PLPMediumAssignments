@@ -55,10 +55,10 @@ fn thread(listener: TcpListener, reader_mutex: Arc<Mutex<FortuneReader>>) {
     println!("Listening for connections on port {}", 8080);
 
     for stream in listener.incoming() {
-        thread::sleep(Duration::from_secs(2));
         match stream {
             Ok(stream) => {
                 handle_client(stream, reader_mutex.clone());
+                thread::sleep(Duration::from_secs(10));
             }
             Err(e) => {
                 println!("Unable to connect: {}", e);
