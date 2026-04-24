@@ -42,6 +42,33 @@ impl UrlMatcher<String> for AlphaMatcher {
     }
 }
 
+pub struct StringAndThen<T> {
+    pub string: String,
+    pub matcher: Box<dyn UrlMatcher<T>>,
+}
+
+impl<T> StringAndThen<T> {
+    pub fn new<U>(string: String, matcher: U) -> StringAndThen<T>
+    where
+        U: UrlMatcher<T> + 'static,
+    {
+        StringAndThen::<T> {
+            string: string,
+            matcher: Box::from(matcher),
+        }
+    }
+}
+
+impl<T> UrlMatcher<T> for StringAndThen<T> {
+    fn do_match<'a>(&self, s: &'a str) -> Option<(T, &'a str)> {
+        if !s.starts_with(&self.string) {
+            return None;
+        }
+        let remaining = &s[self.string.len()..];
+        self.matcher.do_match(remaining)
+    }
+}
+
 #[test]
 fn test_fixed_width_num() {
     {
@@ -133,35 +160,34 @@ fn test_alpha_matcher() {
         assert_eq!(result, None);
     }
 }
-//
-// #[test]
-// fn test_string_and_then_matcher() {
-//     {
-//         let matcher = StringAndThen::new("http://foo.com/".to_string() , AlphaMatcher { });
-//         let (a, b) = matcher.do_match("http://foo.com/hello1234").unwrap();
-//         assert_eq!(a, "hello");
-//         assert_eq!(b, "1234");
-//     }
-//     {
-//         let matcher = StringAndThen::new("http://foo.com/".to_string() , AlphaMatcher { });
-//         let result = matcher.do_match("XXXXXXXXXXXXXXhello1234");
-//         assert_eq!(result, None);
-//     }
-//     {
-//         let matcher = StringAndThen::new("http://foo.com/".to_string() , AlphaMatcher { });
-//         let result = matcher.do_match("foo.com");
-//         assert_eq!(result, None);
-//     }
-//
-//
-//     {
-//         // this one fails cause the alphamatcher fails
-//         let matcher = StringAndThen::new("http://foo.com/".to_string() , AlphaMatcher { });
-//         let result = matcher.do_match("http://foo.com/1234");
-//         assert_eq!(result, None);
-//     }
-// }
-//
+
+#[test]
+fn test_string_and_then_matcher() {
+    {
+        let matcher = StringAndThen::new("http://foo.com/".to_string(), AlphaMatcher {});
+        let (a, b) = matcher.do_match("http://foo.com/hello1234").unwrap();
+        assert_eq!(a, "hello");
+        assert_eq!(b, "1234");
+    }
+    {
+        let matcher = StringAndThen::new("http://foo.com/".to_string(), AlphaMatcher {});
+        let result = matcher.do_match("XXXXXXXXXXXXXXhello1234");
+        assert_eq!(result, None);
+    }
+    {
+        let matcher = StringAndThen::new("http://foo.com/".to_string(), AlphaMatcher {});
+        let result = matcher.do_match("foo.com");
+        assert_eq!(result, None);
+    }
+
+    {
+        // this one fails cause the alphamatcher fails
+        let matcher = StringAndThen::new("http://foo.com/".to_string(), AlphaMatcher {});
+        let result = matcher.do_match("http://foo.com/1234");
+        assert_eq!(result, None);
+    }
+}
+
 // #[test]
 // fn test_agg_matcher() {
 //
