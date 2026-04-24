@@ -69,6 +69,44 @@ impl<T> UrlMatcher<T> for StringAndThen<T> {
     }
 }
 
+pub struct EmptyMatcher {}
+
+impl UrlMatcher<()> for EmptyMatcher {
+    fn do_match<'a>(&self, s: &'a str) -> Option<((), &'a str)> {
+        if s.is_empty() {
+            Some(((), s))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct AggMatcher<T, U> {
+    pub matcher1: Box<dyn UrlMatcher<T>>,
+    pub matcher2: Box<dyn UrlMatcher<U>>,
+}
+
+impl<T, U> AggMatcher<T, U> {
+    pub fn new<V, W>(matcher1: V, matcher2: W) -> AggMatcher<T, U>
+    where
+        V: UrlMatcher<T> + 'static,
+        W: UrlMatcher<U> + 'static,
+    {
+        AggMatcher::<T, U> {
+            matcher1: Box::from(matcher1),
+            matcher2: Box::from(matcher2),
+        }
+    }
+}
+
+impl<T, U> UrlMatcher<(T, U)> for AggMatcher<T, U> {
+    fn do_match<'a>(&self, s: &'a str) -> Option<((T, U), &'a str)> {
+        let (result1, rest) = self.matcher1.do_match(s)?;
+        let (result2, rest) = self.matcher2.do_match(rest)?;
+        Some(((result1, result2), rest))
+    }
+}
+
 #[test]
 fn test_fixed_width_num() {
     {
@@ -124,7 +162,7 @@ fn test_fixed_width_num() {
     }
 }
 // UNCOMMENT THESE OTHER TESTS AS YOU GO!
-//
+
 #[test]
 fn test_alpha_matcher() {
     {
@@ -188,82 +226,76 @@ fn test_string_and_then_matcher() {
     }
 }
 
-// #[test]
-// fn test_agg_matcher() {
-//
-//     {
-//         let matcher = FixedWidthNum { width : 4 };
-//         let matcher2 = AlphaMatcher { };
-//         let matcher3 = AggMatcher::new(matcher, matcher2);
-//         let ((a3, a4), b3) = matcher3.do_match("1234hello5").unwrap();
-//         assert_eq!(1234, a3);
-//         assert_eq!("hello", a4);
-//         assert_eq!("5", b3);
-//     }
-//
-//     {
-//         let matcher = FixedWidthNum { width : 4 };
-//         let matcher2 = AlphaMatcher { };
-//         let matcher3 = AggMatcher::new(matcher, matcher2);
-//         assert_eq!(None, matcher3.do_match("hello"));
-//     }
-//
-//     {
-//         let matcher = FixedWidthNum { width : 4 };
-//         let matcher2 = AlphaMatcher { };
-//         let matcher3 = AggMatcher::new(matcher, matcher2);
-//         assert_eq!(None, matcher3.do_match("333344444"));
-//     }
-//
-//     {
-//         // a bigger aggregate!
-//         let matcher = StringAndThen::new(
-//             "/product_id/".to_string(),
-//             FixedWidthNum { width : 4 });
-//         let matcher2 = StringAndThen::new (
-//             "/state_code/".to_string(),
-//             AlphaMatcher { }
-//             );
-//         let matcher3 = StringAndThen::new(
-//             "http://foobar.com".to_string(),
-//             AggMatcher::new(matcher, matcher2)
-//         );
-//         let ((a3, a4), b3) = matcher3.do_match("http://foobar.com/product_id/1234/state_code/hello").unwrap();
-//         assert_eq!(1234, a3);
-//         assert_eq!("hello", a4);
-//         assert_eq!("", b3);
-//     }
-//
-//
-// }
+#[test]
+fn test_agg_matcher() {
+    {
+        let matcher = FixedWidthNum { width: 4 };
+        let matcher2 = AlphaMatcher {};
+        let matcher3 = AggMatcher::new(matcher, matcher2);
+        let ((a3, a4), b3) = matcher3.do_match("1234hello5").unwrap();
+        assert_eq!(1234, a3);
+        assert_eq!("hello", a4);
+        assert_eq!("5", b3);
+    }
 
-// #[test]
-// fn test_empty_matcher() {
-//     {
-//         let matcher = EmptyMatcher {};
-//         let result = matcher.do_match("hello");
-//         assert_eq!(result, None);
-//     }
-//     {
-//         let matcher = EmptyMatcher {};
-//         let (a, b) = matcher.do_match("").unwrap();
-//         assert_eq!(a, ());
-//         assert_eq!(b, "");
-//     }
-//     {
-//         let matcher = StringAndThen::new("/contact-us".to_string(), EmptyMatcher {});
-//         let (a, b) = matcher.do_match("/contact-us").unwrap();
-//         assert_eq!(a, ());
-//         assert_eq!(b, "");
-//     }
-//     {
-//         let matcher = StringAndThen::new("/contact-us".to_string(), EmptyMatcher {});
-//         let result = matcher.do_match("/contact-us/extra");
-//         assert_eq!(result, None);
-//     }
-//     {
-//         let matcher = StringAndThen::new("/contact-us".to_string(), EmptyMatcher {});
-//         let result = matcher.do_match("/other-page");
-//         assert_eq!(result, None);
-//     }
-// }
+    {
+        let matcher = FixedWidthNum { width: 4 };
+        let matcher2 = AlphaMatcher {};
+        let matcher3 = AggMatcher::new(matcher, matcher2);
+        assert_eq!(None, matcher3.do_match("hello"));
+    }
+
+    {
+        let matcher = FixedWidthNum { width: 4 };
+        let matcher2 = AlphaMatcher {};
+        let matcher3 = AggMatcher::new(matcher, matcher2);
+        assert_eq!(None, matcher3.do_match("333344444"));
+    }
+
+    {
+        // a bigger aggregate!
+        let matcher = StringAndThen::new("/product_id/".to_string(), FixedWidthNum { width: 4 });
+        let matcher2 = StringAndThen::new("/state_code/".to_string(), AlphaMatcher {});
+        let matcher3 = StringAndThen::new(
+            "http://foobar.com".to_string(),
+            AggMatcher::new(matcher, matcher2),
+        );
+        let ((a3, a4), b3) = matcher3
+            .do_match("http://foobar.com/product_id/1234/state_code/hello")
+            .unwrap();
+        assert_eq!(1234, a3);
+        assert_eq!("hello", a4);
+        assert_eq!("", b3);
+    }
+}
+
+#[test]
+fn test_empty_matcher() {
+    {
+        let matcher = EmptyMatcher {};
+        let result = matcher.do_match("hello");
+        assert_eq!(result, None);
+    }
+    {
+        let matcher = EmptyMatcher {};
+        let (a, b) = matcher.do_match("").unwrap();
+        assert_eq!(a, ());
+        assert_eq!(b, "");
+    }
+    {
+        let matcher = StringAndThen::new("/contact-us".to_string(), EmptyMatcher {});
+        let (a, b) = matcher.do_match("/contact-us").unwrap();
+        assert_eq!(a, ());
+        assert_eq!(b, "");
+    }
+    {
+        let matcher = StringAndThen::new("/contact-us".to_string(), EmptyMatcher {});
+        let result = matcher.do_match("/contact-us/extra");
+        assert_eq!(result, None);
+    }
+    {
+        let matcher = StringAndThen::new("/contact-us".to_string(), EmptyMatcher {});
+        let result = matcher.do_match("/other-page");
+        assert_eq!(result, None);
+    }
+}
