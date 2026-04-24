@@ -23,8 +23,8 @@ impl UrlMatcher<u64> for FixedWidthNum {
 
 pub struct AlphaMatcher {}
 
-impl UrlMatcher<&str> for AlphaMatcher {
-    fn do_match<'a>(&self, s: &'a str) -> Option<(&'a str, &'a str)> {
+impl UrlMatcher<String> for AlphaMatcher {
+    fn do_match<'a>(&self, s: &'a str) -> Option<(String, &'a str)> {
         let mut index = 0;
         for char in s.chars() {
             if char.is_alphabetic() {
@@ -36,7 +36,7 @@ impl UrlMatcher<&str> for AlphaMatcher {
         if index == 0 {
             return None;
         }
-        let out: &'a str = &s[0..index];
+        let out = String::from(&s[0..index]);
         let rest: &'a str = &s[index..];
         Some((out, rest))
     }
@@ -98,43 +98,41 @@ fn test_fixed_width_num() {
 }
 // UNCOMMENT THESE OTHER TESTS AS YOU GO!
 //
-// #[test]
-// fn test_alpha_matcher() {
-//     {
-//         let matcher = AlphaMatcher { };
-//         let (a, b) = matcher.do_match("hello1234").unwrap();
-//         assert_eq!(a, "hello");
-//         assert_eq!(b, "1234");
-//     }
-//
-//     {
-//         let matcher = AlphaMatcher { };
-//         let (a, b) = matcher.do_match("q1234").unwrap();
-//         assert_eq!(a, "q");
-//         assert_eq!(b, "1234");
-//     }
-//
-//     {
-//         let matcher = AlphaMatcher { };
-//         let (a, b) = matcher.do_match("longlonglong").unwrap();
-//         assert_eq!(a, "longlonglong");
-//         assert_eq!(b, "");
-//     }
-//
-//     {
-//         let matcher = AlphaMatcher { };
-//         let result = matcher.do_match("1234");
-//         assert_eq!(result, None);
-//     }
-//
-//     {
-//         let matcher = AlphaMatcher { };
-//         let result = matcher.do_match("");
-//         assert_eq!(result, None);
-//     }
-//
-//
-// }
+#[test]
+fn test_alpha_matcher() {
+    {
+        let matcher = AlphaMatcher {};
+        let (a, b) = matcher.do_match("hello1234").unwrap();
+        assert_eq!(a, "hello");
+        assert_eq!(b, "1234");
+    }
+
+    {
+        let matcher = AlphaMatcher {};
+        let (a, b) = matcher.do_match("q1234").unwrap();
+        assert_eq!(a, "q");
+        assert_eq!(b, "1234");
+    }
+
+    {
+        let matcher = AlphaMatcher {};
+        let (a, b) = matcher.do_match("longlonglong").unwrap();
+        assert_eq!(a, "longlonglong");
+        assert_eq!(b, "");
+    }
+
+    {
+        let matcher = AlphaMatcher {};
+        let result = matcher.do_match("1234");
+        assert_eq!(result, None);
+    }
+
+    {
+        let matcher = AlphaMatcher {};
+        let result = matcher.do_match("");
+        assert_eq!(result, None);
+    }
+}
 //
 // #[test]
 // fn test_string_and_then_matcher() {
