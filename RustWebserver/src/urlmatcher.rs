@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 pub trait UrlMatcher<T> {
     fn do_match<'a>(&self, s: &'a str) -> Option<(T, &'a str)>;
 }

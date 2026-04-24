@@ -9,6 +9,7 @@ mod urlmatcher;
 use urlmatcher::UrlMatcher;
 
 use crate::fortune::FortuneReader;
+use crate::urlmatcher::{AggMatcher, EmptyMatcher, FixedWidthNum, StringAndThen};
 
 // adapted from https://gist.github.com/mjohnsullivan/e5182707caf0a9dbdf2d
 
@@ -46,9 +47,41 @@ fn handle_write(mut stream: TcpStream, reader_mutex: Arc<Mutex<FortuneReader>>) 
     }
 }
 
-fn handle_client(stream: TcpStream, reader_mutex: Arc<Mutex<FortuneReader>>) {
-    let _path = handle_read(&stream);
-    handle_write(stream, reader_mutex);
+struct UrlHandler<T> {
+    matcher: Box<dyn UrlMatcher<T>>,
+    handle_write: Box<dyn Fn(T) -> String>,
+}
+
+impl<T> UrlHandler<T> {
+    pub fn new<U, W>(matcher: U, handle_write: W) -> Self
+    where
+        U: UrlMatcher<T> + 'static,
+        W: Fn(T) -> String + 'static,
+    {
+        Self {
+            matcher: Box::from(matcher),
+            handle_write: Box::from(handle_write),
+        }
+    }
+}
+
+fn make_matcher<T>(handler: UrlHandler<T>) -> Box<dyn Fn(&str) -> Option<String>>
+where
+    T: 'static,
+{
+    Box::from(move |path: &str| {
+        let (vals, _) = handler.matcher.do_match(path)?;
+        Some((handler.handle_write)(vals))
+    })
+}
+
+fn handle_client(mut stream: TcpStream, reader_mutex: Arc<Mutex<FortuneReader>>) {
+    let path = handle_read(&stream).expect("request should have path");
+    if let Some(response) = compute_response(&path) {
+        stream.write(response.as_bytes()).unwrap();
+    } else {
+        handle_write(stream, reader_mutex);
+    }
 }
 
 fn thread(listener: TcpListener, reader_mutex: Arc<Mutex<FortuneReader>>) {
@@ -58,7 +91,7 @@ fn thread(listener: TcpListener, reader_mutex: Arc<Mutex<FortuneReader>>) {
         match stream {
             Ok(stream) => {
                 handle_client(stream, reader_mutex.clone());
-                thread::sleep(Duration::from_secs(10));
+                thread::sleep(Duration::from_secs(1));
             }
             Err(e) => {
                 println!("Unable to connect: {}", e);
@@ -87,8 +120,48 @@ fn main() {
 
 // Step 4: Implement this function to match URLs and return content.
 // Return None if the URL can't be matched (webserver should fall back to fortune).
-fn compute_response(_path: &str) -> Option<String> {
-    None // TODO: implement URL matching routes
+fn compute_response(path: &str) -> Option<String> {
+    let mut handlers = vec![];
+    handlers.push(make_matcher(UrlHandler::new(
+        StringAndThen::new("/contact-us".to_string(), EmptyMatcher {}),
+        |_| {
+            "Contact using our emails: steigeo@rose-hulman.edu, ciminodj@rose-hulman.edu, and wanghuk@rose-hulman.edu".to_string()
+        },
+    )));
+    handlers.push(make_matcher(UrlHandler::new(
+        StringAndThen::new(
+            "/calendar/".to_string(),
+            AggMatcher::new(
+                FixedWidthNum { width: 2 },
+                StringAndThen::new("/".to_string(), FixedWidthNum { width: 4 }),
+            ),
+        ),
+        |(month_num, year)| {
+            let month = match month_num {
+                1 => "January",
+                2 => "February",
+                3 => "March",
+                4 => "April",
+                5 => "May",
+                6 => "June",
+                7 => "July",
+                8 => "August",
+                9 => "September",
+                10 => "October",
+                11 => "November",
+                12 => "December",
+                _ => "bro wtf",
+            };
+            format!("Calendar for {month} {year}").to_string()
+        },
+    )));
+    for handler in handlers {
+        let response = (handler)(path);
+        if response.is_some() {
+            return response;
+        }
+    }
+    None
 }
 
 // Step 4 tests
