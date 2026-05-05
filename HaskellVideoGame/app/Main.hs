@@ -27,19 +27,26 @@ data KaelinGame = Game
         enemyVelY :: Float,
         enemyProjectiles :: [(Float, Float)],
         enemySpawnTimer :: Float,
-        enemySpawnCooldown :: Float
-        , enemyFireTimer :: Float
-        , enemyFireCooldown :: Float
+        enemySpawnCooldown :: Float,
+        enemyFireTimer :: Float,
+        enemyFireCooldown :: Float,
+        loseScreen :: Float
     } deriving Show
 
 render :: KaelinGame -> Picture
 render game =
-        pictures (kaelin : (enemyPics ++ projectilePics ++ enemyProjectilePics))
+        pictures (overlayPics ++ worldPics)
     where
         kaelin = color white $ uncurry translate (kaelinLoc game) $ circleSolid 10
         enemyPics = map (\t -> uncurry translate t $ color orange $ circleSolid 10) (enemies game)
         projectilePics = map (\t -> uncurry translate t $ color green $ circleSolid 3) (friendlyProjectiles game)
         enemyProjectilePics = map (\t -> uncurry translate t $ color red $ circleSolid 3) (enemyProjectiles game)
+        worldPics = kaelin : (enemyPics ++ projectilePics ++ enemyProjectilePics)
+        gameOverPic = pictures
+            [  translate (-230) 40 $ scale 0.5 0.5 $ color red $ text "GAME OVER"
+            , translate (-260) (-40) $ scale 0.2 0.2 $ color white $ text "Press R to restart"
+            ]
+        overlayPics = if loseScreen game > 0 then [gameOverPic] else []
 
 
 initialState :: KaelinGame
@@ -58,7 +65,8 @@ initialState = Game
         enemySpawnTimer = 0,
         enemySpawnCooldown = 2.0,
         enemyFireTimer = 1.0,
-        enemyFireCooldown = 1.5
+        enemyFireCooldown = 1.5,
+        loseScreen = 0
     }
 
 moveKaelin :: Float -> KaelinGame -> KaelinGame
@@ -97,17 +105,32 @@ type Pos = (Float, Float)
 collides :: Pos -> Float -> Pos -> Float -> Bool
 collides (x1, y1) r1 (x2, y2) r2 =
     let dx = x1 - x2
-        dy = y1 = y2
+        dy = y1 - y2
         rs = r1 + r2
     in dx*dx + dy*dy <= rs*rs
 
 enemyCollision :: KaelinGame -> KaelinGame
-enemyCollision game = game { enemies = survivors }
+enemyCollision game = game { enemies = survivors}
     where
+        bullets = friendlyProjectiles game
         bulletRadius = 3
         enemyRadius = 10
 
-        isHit enemy = any (\b -> collides enemy enemyRadius)
+        isHit enemy = any (\bullet -> collides bullet bulletRadius enemy enemyRadius) bullets
+        survivors = filter (not . isHit) (enemies game)
+
+selfCollision :: KaelinGame -> KaelinGame
+selfCollision game
+    | hitByEnemyProjectile || hitByEnemyBody = game { loseScreen = 1 }
+    | otherwise = game
+    where
+        playerPos = kaelinLoc game
+        playerRadius = 10
+        bulletRadius = 3
+        enemyRadius = 10
+
+        hitByEnemyProjectile = any (\bullet -> collides bullet bulletRadius playerPos playerRadius) (enemyProjectiles game)
+        hitByEnemyBody = any (\enemy -> collides enemy enemyRadius playerPos playerRadius) (enemies game)
 
 
 
@@ -120,7 +143,7 @@ fps = 60
 handleKeys :: Event -> KaelinGame -> KaelinGame
 
 handleKeys (EventKey (Char 'r') _ _ _) game =
-    game { kaelinLoc = (0, 0) }
+    initialState
 
 handleKeys (EventKey (Char 'w') Down _ _) game =
     game { kaelinVelY = 250}
@@ -160,13 +183,13 @@ main :: IO ()
 main = play window background fps initialState render handleKeys update
 
 update :: Float -> KaelinGame -> KaelinGame
+update _ game | loseScreen game > 0 = game
 update seconds game =
-    let moved = (moveEnemyProjectile seconds . moveProjectile seconds . moveEnemy seconds . moveKaelin seconds) game
+    let moved = (selfCollision . enemyCollision . moveEnemyProjectile seconds . moveProjectile seconds . moveEnemy seconds . moveKaelin seconds) game
         timer = spawnTimer moved - seconds
         enemyTimer = enemySpawnTimer moved - seconds
         fireTimer = enemyFireTimer moved - seconds
         cooldown = 0.5
-        -- handle enemy spawn timer
         afterEnemySpawn = if enemyTimer <= 0
                           then moved { enemies = (0, 200) : enemies moved
                                      , enemySpawnTimer = enemySpawnCooldown moved }
