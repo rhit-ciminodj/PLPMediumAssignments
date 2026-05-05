@@ -92,6 +92,28 @@ moveAndFilter seconds f lst = filter inBounds (map f lst)
     where
         inBounds (_, y) = y >= (-fromIntegral height / 2) && y <= fromIntegral height / 2
 
+type Pos = (Float, Float)
+
+collides :: Pos -> Float -> Pos -> Float -> Bool
+collides (x1, y1) r1 (x2, y2) r2 =
+    let dx = x1 - x2
+        dy = y1 = y2
+        rs = r1 + r2
+    in dx*dx + dy*dy <= rs*rs
+
+enemyCollision :: KaelinGame -> KaelinGame
+enemyCollision game = game { enemies = survivors }
+    where
+        bulletRadius = 3
+        enemyRadius = 10
+
+        isHit enemy = any (\b -> collides enemy enemyRadius)
+
+
+
+
+    
+
 fps :: Int
 fps = 60
 
