@@ -9,7 +9,7 @@ height = 1000
 offset = 100
 
 window :: Display
-window = InWindow "Pong" (width, height) (offset, offset)
+window = InWindow "Kaelin Game" (width, height) (offset, offset)
 
 background :: Color
 background = black
@@ -23,8 +23,13 @@ data KaelinGame = Game
         friendlyProjectiles :: [(Float, Float)],
         projectileVelocity :: Float,
         enemies :: [(Float, Float)],
-        enemySpeed :: Float,
-        enemyProjectiles :: [(Float, Float)]
+        enemyVelX :: Float,
+        enemyVelY :: Float,
+        enemyProjectiles :: [(Float, Float)],
+        enemySpawnTimer :: Float,
+        enemySpawnCooldown :: Float
+        , enemyFireTimer :: Float
+        , enemyFireCooldown :: Float
     } deriving Show
 
 render :: KaelinGame -> Picture
@@ -39,16 +44,21 @@ render game =
 
 initialState :: KaelinGame
 initialState = Game
-    { kaelinLoc = (0, -200),
-            kaelinVelX = 0,
-            kaelinVelY = 0,
-            spawnHeld = False,
-            spawnTimer = 0,
+    {   kaelinLoc = (0, -200),
+        kaelinVelX = 0,
+        kaelinVelY = 0,
+        spawnHeld = False,
+        spawnTimer = 0,
         friendlyProjectiles = [],
         projectileVelocity = 300,
         enemies = [],
-        enemySpeed = 100,
-        enemyProjectiles = []
+        enemyVelX = 0,
+        enemyVelY = -100,
+        enemyProjectiles = [],
+        enemySpawnTimer = 0,
+        enemySpawnCooldown = 2.0,
+        enemyFireTimer = 1.0,
+        enemyFireCooldown = 1.5
     }
 
 moveKaelin :: Float -> KaelinGame -> KaelinGame
@@ -61,18 +71,25 @@ moveKaelin seconds game = game { kaelinLoc = (x', y') }
         x' = x + vx * seconds
         y' = y + vy * seconds
 
-moveProjectile :: Float -> KaelinGame ->  KaelinGame
-moveProjectile seconds game = game { friendlyProjectiles = filter inBounds moved }
+moveEnemy :: Float -> KaelinGame -> KaelinGame
+moveEnemy seconds game = game { enemies = moveAndFilter seconds moveOne (enemies game) }
     where
-        moved = map moveOne (friendlyProjectiles game)
+        moveOne (x, y) = (x + enemyVelX game * seconds, y + enemyVelY game * seconds)
+                    
+
+moveProjectile :: Float -> KaelinGame ->  KaelinGame
+moveProjectile seconds game = game { friendlyProjectiles = moveAndFilter seconds moveOne (friendlyProjectiles game) }
+    where
         moveOne (x, y) = (x, y + projectileVelocity game * seconds)
-        inBounds (_, y) = y >= (-fromIntegral height / 2) && y <= fromIntegral height / 2
 
 moveEnemyProjectile :: Float -> KaelinGame -> KaelinGame
-moveEnemyProjectile seconds game = game { enemyProjectiles = filter inBounds moved }
+moveEnemyProjectile seconds game = game { enemyProjectiles = moveAndFilter seconds moveOne (enemyProjectiles game) }
     where
-        moved = map moveOne (enemyProjectiles game)
         moveOne (x, y) = (x, y - projectileVelocity game * seconds)
+
+moveAndFilter :: Float -> ((Float, Float) -> (Float, Float)) -> [(Float, Float)] -> [(Float, Float)]
+moveAndFilter seconds f lst = filter inBounds (map f lst)
+    where
         inBounds (_, y) = y >= (-fromIntegral height / 2) && y <= fromIntegral height / 2
 
 fps :: Int
@@ -122,10 +139,21 @@ main = play window background fps initialState render handleKeys update
 
 update :: Float -> KaelinGame -> KaelinGame
 update seconds game =
-    let moved = moveProjectile seconds (moveKaelin seconds game)
+    let moved = (moveEnemyProjectile seconds . moveProjectile seconds . moveEnemy seconds . moveKaelin seconds) game
         timer = spawnTimer moved - seconds
+        enemyTimer = enemySpawnTimer moved - seconds
+        fireTimer = enemyFireTimer moved - seconds
         cooldown = 0.5
-    in if spawnHeld moved && timer <= 0
-       then moved { friendlyProjectiles = kaelinLoc moved : friendlyProjectiles moved
-                  , spawnTimer = cooldown }
-       else moved { spawnTimer = max 0 timer }
+        -- handle enemy spawn timer
+        afterEnemySpawn = if enemyTimer <= 0
+                          then moved { enemies = (0, 200) : enemies moved
+                                     , enemySpawnTimer = enemySpawnCooldown moved }
+                          else moved { enemySpawnTimer = max 0 enemyTimer }
+        afterEnemyFire = if fireTimer <= 0 && not (null (enemies afterEnemySpawn))
+                         then afterEnemySpawn { enemyProjectiles = (map (\(x,y) -> (x, y-10)) (enemies afterEnemySpawn)) ++ enemyProjectiles afterEnemySpawn
+                                              , enemyFireTimer = enemyFireCooldown afterEnemySpawn }
+                         else afterEnemySpawn { enemyFireTimer = max 0 fireTimer }
+    in if spawnHeld afterEnemyFire && timer <= 0
+       then afterEnemyFire { friendlyProjectiles = kaelinLoc afterEnemyFire : friendlyProjectiles afterEnemyFire
+                           , spawnTimer = cooldown }
+       else afterEnemyFire { spawnTimer = max 0 timer }
