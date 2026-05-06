@@ -124,14 +124,16 @@ collides (x1, y1) r1 (x2, y2) r2 =
     in dx*dx + dy*dy <= rs*rs
 
 enemyCollision :: KaelinGame -> KaelinGame
-enemyCollision game = game { enemies = survivors}
+enemyCollision game = game { enemies = enemySurvivors, friendlyProjectiles = friendlySurvivors }
     where
         bullets = friendlyProjectiles game
+        enemyList = enemies game
         bulletRadius = 3
         enemyRadius = 10
 
-        isHit enemy = any (\bullet -> collides bullet bulletRadius enemy enemyRadius) bullets
-        survivors = filter (not . isHit) (enemies game)
+        isHit listBy obj = any (\by -> collides by bulletRadius obj enemyRadius) listBy
+        enemySurvivors = filter (not . isHit bullets) enemyList
+        friendlySurvivors = filter (not . isHit enemyList) bullets
 
 selfCollision :: KaelinGame -> KaelinGame
 selfCollision game
