@@ -18,6 +18,7 @@ data KaelinGame = Game
     { kaelinLoc :: (Float, Float),
             kaelinVelX :: Float,
             kaelinVelY :: Float,
+            keysPressed :: (Bool, Bool, Bool, Bool),
         spawnHeld :: Bool,
         spawnTimer :: Float,
         friendlyProjectiles :: [(Float, Float)],
@@ -54,6 +55,7 @@ initialState = Game
     {   kaelinLoc = (0, -200),
         kaelinVelX = 0,
         kaelinVelY = 0,
+        keysPressed = (False, False, False, False),
         spawnHeld = False,
         spawnTimer = 0,
         friendlyProjectiles = [],
@@ -68,6 +70,18 @@ initialState = Game
         enemyFireCooldown = 1.5,
         loseScreen = 0
     }
+
+readInput :: KaelinGame -> KaelinGame
+readInput game = game { kaelinVelX = vx, kaelinVelY = vy }
+    where
+        (u, d, l, r) = keysPressed game
+        vy0 = if u then 250 else 0
+        vy1 = if d then vy0 - 250 else vy0
+        vx0 = if r then 250 else 0
+        vx1 = if l then vx0 - 250 else vx0
+        normalize = (u /= d) && (l /= r)
+        vx = if normalize then 0.707 * vx1 else vx1
+        vy = if normalize then 0.707 * vy1 else vy1
 
 moveKaelin :: Float -> KaelinGame -> KaelinGame
 moveKaelin seconds game = game { kaelinLoc = (x', y') }
@@ -146,35 +160,50 @@ handleKeys (EventKey (Char 'r') _ _ _) game =
     initialState
 
 handleKeys (EventKey (Char 'w') Down _ _) game =
-    game { kaelinVelY = 250}
+    game { keysPressed = (True, d, l, r) }
+    where
+        (u, d, l, r) = keysPressed game
 
 handleKeys (EventKey (Char 's') Down _ _) game =
-    game { kaelinVelY = -250}
+    game { keysPressed = (u, True, l, r) }
+    where
+        (u, d, l, r) = keysPressed game
 
 handleKeys (EventKey (Char 'a') Down _ _) game =
-    game { kaelinVelX = -250}
+    game { keysPressed = (u, d, True, r) }
+    where
+        (u, d, l, r) = keysPressed game
 
 handleKeys (EventKey (Char 'd') Down _ _) game =
-    game { kaelinVelX = 250}
+    game { keysPressed = (u, d, l, True) }
+    where
+        (u, d, l, r) = keysPressed game
 
 handleKeys (EventKey (Char 'w') Up _ _) game =
-    game { kaelinVelY = 0}
+    game { keysPressed = (False, d, l, r) }
+    where
+        (u, d, l, r) = keysPressed game
+
+handleKeys (EventKey (Char 's') Up _ _) game =
+    game { keysPressed = (u, False, l, r) }
+    where
+        (u, d, l, r) = keysPressed game
+
+handleKeys (EventKey (Char 'a') Up _ _) game =
+    game { keysPressed = (u, d, False, r) }
+    where
+        (u, d, l, r) = keysPressed game
+
+handleKeys (EventKey (Char 'd') Up _ _) game =
+    game { keysPressed = (u, d, l, False) }
+    where
+        (u, d, l, r) = keysPressed game
 
 handleKeys (EventKey (SpecialKey KeySpace) Down _ _) game =
     game { spawnHeld = True }
 
 handleKeys (EventKey (SpecialKey KeySpace) Up _ _) game =
     game { spawnHeld = False }
-
-handleKeys (EventKey (Char 's') Up _ _) game =
-    game { kaelinVelY = 0}
-
-handleKeys (EventKey (Char 'a') Up _ _) game =
-    game { kaelinVelX = 0}
-
-handleKeys (EventKey (Char 'd') Up _ _) game =
-    game { kaelinVelX = 0}
-
 
 
 handleKeys _ game = game
@@ -185,7 +214,7 @@ main = play window background fps initialState render handleKeys update
 update :: Float -> KaelinGame -> KaelinGame
 update _ game | loseScreen game > 0 = game
 update seconds game =
-    let moved = (selfCollision . enemyCollision . moveEnemyProjectile seconds . moveProjectile seconds . moveEnemy seconds . moveKaelin seconds) game
+    let moved = (selfCollision . enemyCollision . moveEnemyProjectile seconds . moveProjectile seconds . moveEnemy seconds . moveKaelin seconds . readInput) game
         timer = spawnTimer moved - seconds
         enemyTimer = enemySpawnTimer moved - seconds
         fireTimer = enemyFireTimer moved - seconds
