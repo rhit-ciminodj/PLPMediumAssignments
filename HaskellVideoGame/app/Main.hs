@@ -15,34 +15,35 @@ background :: Color
 background = black
 
 data KaelinGame = Game
-    { kaelinLoc :: (Float, Float),
-            kaelinVelX :: Float,
-            kaelinVelY :: Float,
-            keysPressed :: (Bool, Bool, Bool, Bool),
+    {   kaelinLoc :: (Float, Float),
+        kaelinVelX :: Float,
+        kaelinVelY :: Float,
+        keysPressed :: (Bool, Bool, Bool, Bool),
         spawnHeld :: Bool,
         spawnTimer :: Float,
-        friendlyProjectiles :: [(Float, Float)],
-        projectileVelocity :: Float,
-        enemies :: [(Float, Float)],
-        enemyVelX :: Float,
-        enemyVelY :: Float,
-        enemyProjectiles :: [(Float, Float)],
         enemySpawnTimer :: Float,
-        enemySpawnCooldown :: Float,
-        enemyFireTimer :: Float,
-        enemyFireCooldown :: Float,
+        entities :: [Entity],
         loseScreen :: Float
-    } deriving Show
+    }
+
+data Entity = Entity
+    {
+        location :: (Float, Float),
+        updateSelf :: KaelinGame -> Float -> Entity -> Entity,
+        updateWorld :: KaelinGame -> Float -> Entity -> KaelinGame,
+        pic :: Picture,
+        entityTimer :: Float
+    }
+
+
 
 render :: KaelinGame -> Picture
 render game =
         pictures (overlayPics ++ worldPics)
     where
         kaelin = color white $ uncurry translate (kaelinLoc game) $ circleSolid 10
-        enemyPics = map (\t -> uncurry translate t $ color orange $ circleSolid 10) (enemies game)
-        projectilePics = map (\t -> uncurry translate t $ color green $ circleSolid 3) (friendlyProjectiles game)
-        enemyProjectilePics = map (\t -> uncurry translate t $ color red $ circleSolid 3) (enemyProjectiles game)
-        worldPics = kaelin : (enemyPics ++ projectilePics ++ enemyProjectilePics)
+        pics = map (\t -> uncurry translate (location t) (pic t)) $ entities game
+        worldPics = kaelin : pics
         gameOverPic = pictures
             [  translate (-230) 40 $ scale 0.5 0.5 $ color red $ text "GAME OVER"
             , translate (-260) (-40) $ scale 0.2 0.2 $ color white $ text "Press R to restart"
@@ -58,16 +59,8 @@ initialState = Game
         keysPressed = (False, False, False, False),
         spawnHeld = False,
         spawnTimer = 0,
-        friendlyProjectiles = [],
-        projectileVelocity = 300,
-        enemies = [],
-        enemyVelX = 0,
-        enemyVelY = -100,
-        enemyProjectiles = [],
         enemySpawnTimer = 0,
-        enemySpawnCooldown = 2.0,
-        enemyFireTimer = 1.0,
-        enemyFireCooldown = 1.5,
+        entities = [],
         loseScreen = 0
     }
 
@@ -93,21 +86,23 @@ moveKaelin seconds game = game { kaelinLoc = (x', y') }
         x' = x + vx * seconds
         y' = y + vy * seconds
 
-moveEnemy :: Float -> KaelinGame -> KaelinGame
-moveEnemy seconds game = game { enemies = moveAndFilter seconds moveOne (enemies game) }
+updateEntity :: KaelinGame -> Float -> Entity -> Entity
+updateEntity game seconds entity = (updateSelf entity) game seconds entity
+
+updateEntities :: Float -> KaelinGame -> KaelinGame
+updateEntities seconds game = game { entities = entityList }
     where
-        moveOne (x, y) = (x + enemyVelX game * seconds, y + enemyVelY game * seconds)
+        entityList = map (updateEntity game seconds) (entities game)
                     
+-- moveProjectile :: Float -> KaelinGame ->  KaelinGame
+-- moveProjectile seconds game = game { friendlyProjectiles = moveAndFilter seconds moveOne (friendlyProjectiles game) }
+--     where
+--         moveOne (x, y) = (x, y + projectileVelocity game * seconds)
 
-moveProjectile :: Float -> KaelinGame ->  KaelinGame
-moveProjectile seconds game = game { friendlyProjectiles = moveAndFilter seconds moveOne (friendlyProjectiles game) }
-    where
-        moveOne (x, y) = (x, y + projectileVelocity game * seconds)
-
-moveEnemyProjectile :: Float -> KaelinGame -> KaelinGame
-moveEnemyProjectile seconds game = game { enemyProjectiles = moveAndFilter seconds moveOne (enemyProjectiles game) }
-    where
-        moveOne (x, y) = (x, y - projectileVelocity game * seconds)
+-- moveEnemyProjectile :: Float -> KaelinGame -> KaelinGame
+-- moveEnemyProjectile seconds game = game { enemyProjectiles = moveAndFilter seconds moveOne (enemyProjectiles game) }
+--     where
+--         moveOne (x, y) = (x, y - projectileVelocity game * seconds)
 
 moveAndFilter :: Float -> ((Float, Float) -> (Float, Float)) -> [(Float, Float)] -> [(Float, Float)]
 moveAndFilter seconds f lst = filter inBounds (map f lst)
@@ -123,30 +118,30 @@ collides (x1, y1) r1 (x2, y2) r2 =
         rs = r1 + r2
     in dx*dx + dy*dy <= rs*rs
 
-enemyCollision :: KaelinGame -> KaelinGame
-enemyCollision game = game { enemies = enemySurvivors, friendlyProjectiles = friendlySurvivors }
-    where
-        bullets = friendlyProjectiles game
-        enemyList = enemies game
-        bulletRadius = 3
-        enemyRadius = 10
+-- enemyCollision :: KaelinGame -> KaelinGame
+-- enemyCollision game = game {  = enemySurvivors, friendlyProjectiles = friendlySurvivors }
+--     where
+--         bullets = friendlyProjectiles game
+--         enemyList = (map location (enemies game))
+--         bulletRadius = 3
+--         enemyRadius = 10
+-- 
+--         isHit listBy obj = any (\by -> collides by bulletRadius obj enemyRadius) listBy
+--         enemySurvivors = filter (not . isHit bullets) enemyList
+--         friendlySurvivors = filter (not . isHit enemyList) bullets
 
-        isHit listBy obj = any (\by -> collides by bulletRadius obj enemyRadius) listBy
-        enemySurvivors = filter (not . isHit bullets) enemyList
-        friendlySurvivors = filter (not . isHit enemyList) bullets
-
-selfCollision :: KaelinGame -> KaelinGame
-selfCollision game
-    | hitByEnemyProjectile || hitByEnemyBody = game { loseScreen = 1 }
-    | otherwise = game
-    where
-        playerPos = kaelinLoc game
-        playerRadius = 10
-        bulletRadius = 3
-        enemyRadius = 10
-
-        hitByEnemyProjectile = any (\bullet -> collides bullet bulletRadius playerPos playerRadius) (enemyProjectiles game)
-        hitByEnemyBody = any (\enemy -> collides enemy enemyRadius playerPos playerRadius) (enemies game)
+-- selfCollision :: KaelinGame -> KaelinGame
+-- selfCollision game
+--     | hitByEnemyProjectile || hitByEnemyBody = game { loseScreen = 1 }
+--     | otherwise = game
+--     where
+--         playerPos = kaelinLoc game
+--         playerRadius = 10
+--         bulletRadius = 3
+--         enemyRadius = 10
+-- 
+--         hitByEnemyProjectile = any (\bullet -> collides bullet bulletRadius playerPos playerRadius) (enemyProjectiles game)
+--         hitByEnemyBody = any (\enemy -> collides enemy enemyRadius playerPos playerRadius) (map location (enemies game))
 
 
 
@@ -213,23 +208,30 @@ handleKeys _ game = game
 main :: IO ()
 main = play window background fps initialState render handleKeys update
 
+updateEnemy :: KaelinGame -> Float -> Entity -> Entity
+updateEnemy game seconds self = self { location = (x, y), entityTimer = newTimer }
+    where
+        (oldX, oldY) = location self
+        (x, y) = (oldX + 1, 60 * (sin (oldX / 100)))
+        
+
+enemyUpdateWorld :: KaelinGame -> Float -> Entity -> KaelinGame
+enemyUpdateWorld game seconds self = game
+
 update :: Float -> KaelinGame -> KaelinGame
 update _ game | loseScreen game > 0 = game
 update seconds game =
-    let moved = (selfCollision . enemyCollision . moveEnemyProjectile seconds . moveProjectile seconds . moveEnemy seconds . moveKaelin seconds . readInput) game
+    let moved = (moveKaelin seconds . readInput) game
         timer = spawnTimer moved - seconds
         enemyTimer = enemySpawnTimer moved - seconds
-        fireTimer = enemyFireTimer moved - seconds
         cooldown = 0.5
+        enemySpawnCooldown = 2.0
+        updated = updateEntities seconds moved
         afterEnemySpawn = if enemyTimer <= 0
-                          then moved { enemies = (0, 200) : enemies moved
-                                     , enemySpawnTimer = enemySpawnCooldown moved }
-                          else moved { enemySpawnTimer = max 0 enemyTimer }
-        afterEnemyFire = if fireTimer <= 0 && not (null (enemies afterEnemySpawn))
-                         then afterEnemySpawn { enemyProjectiles = (map (\(x,y) -> (x, y-10)) (enemies afterEnemySpawn)) ++ enemyProjectiles afterEnemySpawn
-                                              , enemyFireTimer = enemyFireCooldown afterEnemySpawn }
-                         else afterEnemySpawn { enemyFireTimer = max 0 fireTimer }
-    in if spawnHeld afterEnemyFire && timer <= 0
-       then afterEnemyFire { friendlyProjectiles = kaelinLoc afterEnemyFire : friendlyProjectiles afterEnemyFire
-                           , spawnTimer = cooldown }
-       else afterEnemyFire { spawnTimer = max 0 timer }
+                          then updated { entities = Entity { location = ((-550), 0), updateSelf = updateEnemy, updateWorld = enemyUpdateWorld, pic = color orange $ circleSolid 10, entityTimer: 0.0  } : entities moved
+                                     , enemySpawnTimer = enemySpawnCooldown }
+                          else updated { enemySpawnTimer = max 0 enemyTimer }
+    in if spawnHeld afterEnemySpawn && timer <= 0
+       then afterEnemySpawn { -- friendlyProjectiles = kaelinLoc afterEnemySpawn : friendlyProjectiles afterEnemySpawn
+                            spawnTimer = cooldown }
+       else afterEnemySpawn { spawnTimer = max 0 timer }
