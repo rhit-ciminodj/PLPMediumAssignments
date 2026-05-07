@@ -32,7 +32,10 @@ data Entity = Entity
         updateSelf :: KaelinGame -> Float -> Entity -> Entity,
         updateWorld :: KaelinGame -> Float -> Entity -> KaelinGame,
         pic :: Picture,
-        entityTimer :: Float
+        entityTimer :: Float,
+        radius :: Float,
+        friendly :: Bool
+
     }
 
 
@@ -90,24 +93,16 @@ updateEntity :: KaelinGame -> Float -> Entity -> Entity
 updateEntity game seconds entity = (updateSelf entity) game seconds entity
 
 updateEntities :: Float -> KaelinGame -> KaelinGame
-updateEntities seconds game = game { entities = entityList }
+updateEntities seconds game = gameAfterWorld
     where
         entityList = map (updateEntity game seconds) (entities game)
-                    
--- moveProjectile :: Float -> KaelinGame ->  KaelinGame
--- moveProjectile seconds game = game { friendlyProjectiles = moveAndFilter seconds moveOne (friendlyProjectiles game) }
---     where
---         moveOne (x, y) = (x, y + projectileVelocity game * seconds)
 
--- moveEnemyProjectile :: Float -> KaelinGame -> KaelinGame
--- moveEnemyProjectile seconds game = game { enemyProjectiles = moveAndFilter seconds moveOne (enemyProjectiles game) }
---     where
---         moveOne (x, y) = (x, y - projectileVelocity game * seconds)
+        inBoundsEntity e = let (_, y) = location e in y >= (-fromIntegral height / 2 - 50) && y <= (fromIntegral height / 2 + 50)
+        filteredList = filter inBoundsEntity entityList
 
-moveAndFilter :: Float -> ((Float, Float) -> (Float, Float)) -> [(Float, Float)] -> [(Float, Float)]
-moveAndFilter seconds f lst = filter inBounds (map f lst)
-    where
-        inBounds (_, y) = y >= (-fromIntegral height / 2) && y <= fromIntegral height / 2
+        gameWithEntities = game { entities = filteredList }
+
+        gameAfterWorld = foldl (\g e -> updateWorld e g seconds e) gameWithEntities filteredList
 
 type Pos = (Float, Float)
 
@@ -118,35 +113,36 @@ collides (x1, y1) r1 (x2, y2) r2 =
         rs = r1 + r2
     in dx*dx + dy*dy <= rs*rs
 
--- enemyCollision :: KaelinGame -> KaelinGame
--- enemyCollision game = game {  = enemySurvivors, friendlyProjectiles = friendlySurvivors }
---     where
---         bullets = friendlyProjectiles game
---         enemyList = (map location (enemies game))
---         bulletRadius = 3
---         enemyRadius = 10
--- 
---         isHit listBy obj = any (\by -> collides by bulletRadius obj enemyRadius) listBy
---         enemySurvivors = filter (not . isHit bullets) enemyList
---         friendlySurvivors = filter (not . isHit enemyList) bullets
+playerRadius :: Float
+playerRadius = 10
 
--- selfCollision :: KaelinGame -> KaelinGame
--- selfCollision game
---     | hitByEnemyProjectile || hitByEnemyBody = game { loseScreen = 1 }
---     | otherwise = game
---     where
---         playerPos = kaelinLoc game
---         playerRadius = 10
---         bulletRadius = 3
---         enemyRadius = 10
--- 
---         hitByEnemyProjectile = any (\bullet -> collides bullet bulletRadius playerPos playerRadius) (enemyProjectiles game)
---         hitByEnemyBody = any (\enemy -> collides enemy enemyRadius playerPos playerRadius) (map location (enemies game))
+checkPlayerCollision :: KaelinGame -> Bool
+checkPlayerCollision game = 
+    any (\e -> not (friendly e) && collides (location e) (radius e) (kaelinLoc game) playerRadius) (entities game)
 
+checkEnemyCollision :: KaelinGame -> Bool
+checkEnemyCollision game =
+    any hitEnemy (filter friendly (entities game))
+    where
+        enemyTargets = filter (not . friendly) (entities game)
 
+        hitEnemy bullet = any (collidesEntity bullet) enemyTargets
 
+        collidesEntity bullet enemy =
+            collides (location bullet) (radius bullet) (location enemy) (radius enemy)
 
-    
+resolveEnemyHits :: KaelinGame -> KaelinGame
+resolveEnemyHits game = game { entities = survivingEntities }
+    where
+        bullets = filter friendly (entities game)
+        enemies = filter (not . friendly) (entities game)
+
+        collidesEntity a b = collides (location a) (radius a) (location b) (radius b)
+
+        hitFriendly e = friendly e && any (collidesEntity e) enemies
+        hitEnemy e = not (friendly e) && any (collidesEntity e) bullets
+
+        survivingEntities = filter (\e -> not (hitFriendly e || hitEnemy e)) (entities game)
 
 fps :: Int
 fps = 60
@@ -205,33 +201,100 @@ handleKeys (EventKey (SpecialKey KeySpace) Up _ _) game =
 
 handleKeys _ game = game
 
-main :: IO ()
-main = play window background fps initialState render handleKeys update
-
 updateEnemy :: KaelinGame -> Float -> Entity -> Entity
 updateEnemy game seconds self = self { location = (x, y), entityTimer = newTimer }
     where
         (oldX, oldY) = location self
-        (x, y) = (oldX + 1, 60 * (sin (oldX / 100)))
+        (x, y) = (oldX + 1, (400) + 60 * (sin (oldX / 100)))
+        newTimer = entityTimer self + seconds
         
+updateProjectile :: KaelinGame -> Float -> Entity -> Entity
+updateProjectile _ seconds self = self { location = (x, y'), entityTimer = entityTimer self + seconds }
+    where
+        (x, y) = location self
+        speed = 300
+        direction = if friendly self then 1 else -1
+        y' = y + direction * speed * seconds
+
+spawnProjectileFrom :: Entity -> Entity
+spawnProjectileFrom source = Entity
+    { location = location source, 
+    updateSelf = updateProjectile,
+    updateWorld = \g _ _ -> g,
+    pic = if friendly source then color green $ circleSolid 4 else color red $ circleSolid 4,
+    entityTimer = 0,
+    radius = 3,
+    friendly = friendly source
+    }
+
+spawnEnemyProjectile :: Entity -> Entity
+spawnEnemyProjectile source = spawnProjectileFrom source { friendly = False }
+
+spawnFriendlyProjectile :: Entity -> Entity
+spawnFriendlyProjectile source = spawnProjectileFrom source { friendly = True }
+
+spawnProjectileAt :: Pos -> Bool -> Entity
+spawnProjectileAt pos isFriendly = Entity
+    { location = pos,
+    updateSelf = updateProjectile,
+    updateWorld = \g _ _ -> g,
+    pic = if isFriendly then color yellow $ circleSolid 4 else color red $ circleSolid 4,
+    entityTimer = 0,
+    radius = 3,
+    friendly = isFriendly
+    }
+
 
 enemyUpdateWorld :: KaelinGame -> Float -> Entity -> KaelinGame
-enemyUpdateWorld game seconds self = game
+enemyUpdateWorld game seconds self =
+    if entityTimer self >= shootInterval
+    then let resetEnemy e = if not (friendly e) && location e == location self && radius e == radius self
+                            then e { entityTimer = 0 }
+                            else e
+             resetEntities = map resetEnemy (entities game)
+         in game { entities = spawnEnemyProjectile self : resetEntities }
+    else game
+
+enemyProjectileUpdate :: KaelinGame -> Float -> Entity -> Entity
+enemyProjectileUpdate _ seconds self = self { location = (x, y - speed * seconds), entityTimer = entityTimer self + seconds }
+    where
+        (x, y) = location self
+        speed = 300
+
+shootInterval :: Float
+shootInterval = 1.5
 
 update :: Float -> KaelinGame -> KaelinGame
 update _ game | loseScreen game > 0 = game
 update seconds game =
     let moved = (moveKaelin seconds . readInput) game
+
         timer = spawnTimer moved - seconds
+
         enemyTimer = enemySpawnTimer moved - seconds
+
         cooldown = 0.5
+
         enemySpawnCooldown = 2.0
+
         updated = updateEntities seconds moved
+        
         afterEnemySpawn = if enemyTimer <= 0
-                          then updated { entities = Entity { location = ((-550), 0), updateSelf = updateEnemy, updateWorld = enemyUpdateWorld, pic = color orange $ circleSolid 10, entityTimer: 0.0  } : entities moved
-                                     , enemySpawnTimer = enemySpawnCooldown }
-                          else updated { enemySpawnTimer = max 0 enemyTimer }
-    in if spawnHeld afterEnemySpawn && timer <= 0
-       then afterEnemySpawn { -- friendlyProjectiles = kaelinLoc afterEnemySpawn : friendlyProjectiles afterEnemySpawn
-                            spawnTimer = cooldown }
-       else afterEnemySpawn { spawnTimer = max 0 timer }
+            then updated { entities = Entity { location = ((-550), 0), updateSelf = updateEnemy, updateWorld = enemyUpdateWorld, pic = color orange $ circleSolid 10, entityTimer = 0.0, radius = 10, friendly = False } : entities moved, enemySpawnTimer = enemySpawnCooldown }  
+
+            else updated { enemySpawnTimer = max 0 enemyTimer }
+        afterEnemyHits = if checkEnemyCollision afterEnemySpawn
+            then resolveEnemyHits afterEnemySpawn
+                
+            else afterEnemySpawn
+        afterCollision = if checkPlayerCollision afterEnemyHits
+            then afterEnemyHits { loseScreen = 1 }
+
+            else afterEnemyHits
+        in if spawnHeld afterCollision && timer <= 0
+            then afterCollision { entities = spawnProjectileAt (kaelinLoc afterCollision) True : entities afterCollision, spawnTimer = cooldown }
+
+            else afterCollision { spawnTimer = max 0 timer }
+
+main :: IO ()
+main = play window background fps initialState render handleKeys update
