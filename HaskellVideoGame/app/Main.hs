@@ -24,6 +24,8 @@ data KaelinGame = Game
         shieldHeld :: Bool,
         shieldTimer :: Float,
         shieldActive :: Bool,
+        bombHeld :: Bool,
+        bombTimer :: Float,
         enemySpawnTimer :: Float,
         entities :: [Entity],
         loseScreen :: Float
@@ -67,6 +69,8 @@ initialState = Game
         shieldHeld = False,
         shieldTimer = 0,
         shieldActive = False,
+        bombHeld = False,
+        bombTimer = 0,
         enemySpawnTimer = 0,
         entities = [],
         loseScreen = 0
@@ -279,6 +283,12 @@ handleKeys (EventKey (Char 'g') Down _ _) game =
 handleKeys (EventKey (Char 'g') Up _ _) game =
     game { shieldHeld = False }
 
+handleKeys (EventKey (Char 'h') Down _ _) game =
+    game { bombHeld = True }
+
+handleKeys (EventKey (Char 'h') Up _ _) game =
+    game { bombHeld = False }
+
 handleKeys _ game = game
 
 projectileMovement :: Bool -> Movement
@@ -327,7 +337,7 @@ trackerEnemy pos = Entity
 circularEnemy :: Float -> Float -> Entity
 circularEnemy x speed = Entity
     {   location = (x, 500),
-        updateSelf = combo 2.0 (linear 0 (-45)) (combo 10.0 (circular (x, 275) speed) (combo 13.5 (tracking 150) (linear 0 300))),
+        updateSelf = combo 2.0 (linear 0 (-45)) (combo 10.0 (circular (x, 275) speed) (combo 13.5 (tracking 300) (linear 0 300))),
         updateWorld = \g _ _ -> g,
         pic = color green $ circleSolid 10,
         entityTimer = 0,
@@ -357,6 +367,31 @@ spawnProjectileAt pos isFriendly = Entity
       friendly = isFriendly
     }
 
+bombMovement :: KaelinGame -> Float -> Entity -> Entity
+bombMovement game seconds self = self { location = (x', y'), radius = newRadius, pic = newPic, entityTimer = newTimer }
+    where
+        (x, y) = location self
+        timer = entityTimer self
+        x' = x
+        y' = y + 5
+        entityList = entities game
+        shouldUpdateRadius = any (\e -> let (ex, ey) = location e in (not (friendly e)) && ((radius e) + 30) >= (sqrt (((x - ex) ** 2) + ((y - ey) ** 2)))) entityList
+        newPic = if timer >= 1.0 then color rose $ circleSolid 200 else color rose $ circleSolid 3
+        newRadius = if timer >= 1.1 then 200 else 0
+        newTimer = if timer >= 1.0 then timer + seconds else if shouldUpdateRadius then 1.0 else 0.0
+        
+
+bomb :: Pos -> Entity
+bomb pos = Entity
+    {   location = pos,
+        updateSelf = bombMovement,
+        updateWorld = \g _ _ -> g,
+        pic = color rose $ circleSolid 2,
+        entityTimer = 0,
+        radius = 0,
+        friendly = True
+    }
+
 update :: Float -> KaelinGame -> KaelinGame
 update seconds game
     | loseScreen game > 0 = game
@@ -366,7 +401,7 @@ update seconds game
 
             applyMovement = updateEntities seconds . moveKaelin seconds . readInput
 
-            decrementTimers s g = g { spawnTimer = spawnTimer g - s, shieldTimer = shieldTimer g - s, enemySpawnTimer = enemySpawnTimer g - s }
+            decrementTimers s g = g { spawnTimer = spawnTimer g - s, shieldTimer = shieldTimer g - s, enemySpawnTimer = enemySpawnTimer g - s, bombTimer = bombTimer g - s }
 
             spawnEnemy g =
                 if enemySpawnTimer g <= 0
@@ -382,6 +417,12 @@ update seconds game
                 then g { entities = spawnProjectileAt (kaelinLoc g) True : entities g, spawnTimer = cooldown }
                 else g { spawnTimer = max 0 (spawnTimer g) }
 
+            bombCooldown = 3.0
+            spawnBombIfNeeded g =
+                if bombHeld g && bombTimer g <= 0
+                then g { entities = bomb (kaelinLoc g) : entities g, bombTimer = bombCooldown }
+                else g { bombTimer = max 0 (bombTimer g) }
+
             shieldCooldown = 2.0
 
             spawnShieldIfNeeded g =
@@ -393,7 +434,7 @@ update seconds game
                 let shieldExists = any (\e -> friendly e && radius e == 8) (entities g)
                 in g { shieldActive = shieldExists }
 
-        in (updateShieldActive . spawnShieldIfNeeded . spawnPlayerProjectileIfNeeded . setLoseIfCollided . resolveEnemyHitsIfNeeded . spawnEnemy . decrementTimers seconds . applyMovement) game
+        in (spawnBombIfNeeded . updateShieldActive . spawnShieldIfNeeded . spawnPlayerProjectileIfNeeded . setLoseIfCollided . resolveEnemyHitsIfNeeded . spawnEnemy . decrementTimers seconds . applyMovement) game
 
 main :: IO ()
 main = play window background fps initialState render handleKeys update
