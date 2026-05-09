@@ -135,12 +135,23 @@ sineX amplitude frequency vx vy _ seconds entity =
         y' = yBase + amplitude * sin (entityTimer entity * frequency)
     in tick seconds $ entity { location = (x', y') }
 
+-- Circular motion around a center
+circular :: (Float, Float) -> Float -> Movement
+circular (centerX, centerY) speed _ seconds entity = tick seconds $ entity { location = (x', y') }
+    where
+        (x, y) = location entity
+        oldAngle = atan2 (y - centerY) (x - centerX)
+        angle = oldAngle + seconds * speed
+        radius = sqrt (((x - centerX) ** 2) + ((y - centerY) ** 2))
+        x' = centerX + radius * (cos angle)
+        y' = centerY + radius * (sin angle)
+
 -- Shield orbits around player dynamically
 updateShield :: KaelinGame -> Float -> Entity -> Entity
 updateShield game seconds self =
     let (px, py) = kaelinLoc game
         t = entityTimer self
-        angle = t * 1.2
+        angle = t * 10
         x' = px + 30 * cos angle
         y' = py + 30 * sin angle
     in tick seconds $ self { location = (x', y') }
@@ -158,6 +169,8 @@ tracking speed game seconds entity =
         x' = ex + angleX * speed * seconds
         y' = ey + angleY * speed * seconds
     in tick seconds $ entity { location = (x', y') }
+
+
 
 -- Combine Movements
 combo :: Float -> Movement -> Movement -> Movement
@@ -311,6 +324,17 @@ trackerEnemy pos = Entity
             friendly = False
         }
 
+circularEnemy :: Float -> Float -> Entity
+circularEnemy x speed = Entity
+    {   location = (x, 500),
+        updateSelf = combo 2.0 (linear 0 (-45)) (combo 10.0 (circular (x, 275) speed) (combo 13.5 (tracking 150) (linear 0 300))),
+        updateWorld = \g _ _ -> g,
+        pic = color green $ circleSolid 10,
+        entityTimer = 0,
+        radius = 10,
+        friendly = False
+    }
+
 spawnProjectileFrom :: Entity -> Entity
 spawnProjectileFrom source = Entity
     { location = location source, 
@@ -346,7 +370,7 @@ update seconds game
 
             spawnEnemy g =
                 if enemySpawnTimer g <= 0
-                    then g { entities = normalEnemy (-520, 300) : trackerEnemy (0, 500) : entities g, enemySpawnTimer = enemySpawnCooldown }
+                    then g { entities = normalEnemy (-520, 300) : trackerEnemy (0, 500) : (circularEnemy 250 2) : (circularEnemy (-250) (-2)) : entities g, enemySpawnTimer = enemySpawnCooldown }
                 else g { enemySpawnTimer = max 0 (enemySpawnTimer g) }
 
             resolveEnemyHitsIfNeeded g = if checkEnemyCollision g then resolveEnemyHits g else g
