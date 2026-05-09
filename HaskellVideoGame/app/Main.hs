@@ -21,6 +21,9 @@ data KaelinGame = Game
         keysPressed :: (Bool, Bool, Bool, Bool),
         spawnHeld :: Bool,
         spawnTimer :: Float,
+        shieldHeld :: Bool,
+        shieldTimer :: Float,
+        shieldActive :: Bool,
         enemySpawnTimer :: Float,
         entities :: [Entity],
         loseScreen :: Float
@@ -35,7 +38,6 @@ data Entity = Entity
         entityTimer :: Float,
         radius :: Float,
         friendly :: Bool
-
     }
 
 
@@ -62,6 +64,9 @@ initialState = Game
         keysPressed = (False, False, False, False),
         spawnHeld = False,
         spawnTimer = 0,
+        shieldHeld = False,
+        shieldTimer = 0,
+        shieldActive = False,
         enemySpawnTimer = 0,
         entities = [],
         loseScreen = 0
@@ -97,12 +102,69 @@ updateEntities seconds game = gameAfterWorld
     where
         entityList = map (updateEntity game seconds) (entities game)
 
-        inBoundsEntity e = let (_, y) = location e in y >= (-fromIntegral height / 2 - 50) && y <= (fromIntegral height / 2 + 50)
+        inBoundsEntity e = let (x, y) = location e in y >= (-fromIntegral height / 2 - 50) && y <= (fromIntegral height / 2 + 50) && x >= (-fromIntegral width / 2 - 50) && x <= (fromIntegral height / 2 + 50)
         filteredList = filter inBoundsEntity entityList
 
         gameWithEntities = game { entities = filteredList }
 
         gameAfterWorld = foldl (\g e -> updateWorld e g seconds e) gameWithEntities filteredList
+
+type Movement = KaelinGame -> Float -> Entity -> Entity
+
+-- Help entity clock for angles
+
+tick :: Float -> Entity -> Entity
+tick seconds entity = entity { entityTimer = entityTimer entity + seconds }
+
+-- Composable Movements
+
+-- Linear, constant velocity
+linear :: Float -> Float -> Movement
+linear vx vy _ seconds entity =
+    let (x, y) = location entity
+        x' = x + vx * seconds
+        y' = y + vy * seconds
+    in tick seconds $ entity { location = (x', y') }
+
+-- Sine wavy motion with horizontal and vertical drift
+sineX :: Float -> Float -> Float -> Float -> Movement
+sineX amplitude frequency vx vy _ seconds entity =
+    let (x, y) = location entity
+        x' = x + vx * seconds
+        yBase = y + vy * seconds
+        y' = yBase + amplitude * sin (entityTimer entity * frequency)
+    in tick seconds $ entity { location = (x', y') }
+
+-- Shield orbits around player dynamically
+updateShield :: KaelinGame -> Float -> Entity -> Entity
+updateShield game seconds self =
+    let (px, py) = kaelinLoc game
+        t = entityTimer self
+        angle = t * 1.2
+        x' = px + 30 * cos angle
+        y' = py + 30 * sin angle
+    in tick seconds $ self { location = (x', y') }
+
+-- Track player
+tracking :: Float -> Movement
+tracking speed game seconds entity =
+    let (ex, ey) = location entity
+        (px, py) = kaelinLoc game
+        dx = px - ex
+        dy = py - ey
+        distance = max 1 (sqrt (dx*dx + dy*dy))
+        angleX = dx / distance
+        angleY = dy / distance
+        x' = ex + angleX * speed * seconds
+        y' = ey + angleY * speed * seconds
+    in tick seconds $ entity { location = (x', y') }
+
+-- Combine Movements
+combo :: Float -> Movement -> Movement -> Movement
+combo time m1 m2 game seconds entity = 
+    if entityTimer entity < time
+        then m1 game seconds entity
+        else m2 game seconds entity
 
 type Pos = (Float, Float)
 
@@ -198,8 +260,38 @@ handleKeys (EventKey (SpecialKey KeySpace) Down _ _) game =
 handleKeys (EventKey (SpecialKey KeySpace) Up _ _) game =
     game { spawnHeld = False }
 
+handleKeys (EventKey (Char 'g') Down _ _) game =
+    game { shieldHeld = True }
+
+handleKeys (EventKey (Char 'g') Up _ _) game =
+    game { shieldHeld = False }
 
 handleKeys _ game = game
+
+projectileMovement :: Bool -> Movement
+projectileMovement isFriendly = linear 0 direction
+    where
+        direction = if isFriendly then 220 else -220
+
+enemyUpdateWorld :: KaelinGame -> Float -> Entity -> KaelinGame
+enemyUpdateWorld game seconds self =
+    if entityTimer self >= 1.5
+    then let resetEnemy e = if location e == location self then e { entityTimer = 0 } else e
+             resetEntities = map resetEnemy (entities game)
+             newProjectile = Entity { location = location self, updateSelf = projectileMovement False, updateWorld = \g _ _ -> g, pic = color red $ circleSolid 4, entityTimer = 0, radius = 3, friendly = False }
+         in game { entities = newProjectile : resetEntities }
+    else game
+
+normalEnemy :: Pos -> Entity
+normalEnemy pos = Entity
+    { location = pos,
+     updateSelf = updateEnemy,
+      updateWorld = enemyUpdateWorld,
+      pic = color orange $ circleSolid 10,
+      entityTimer = 0,
+      radius = 10,
+      friendly = False
+    }
 
 updateEnemy :: KaelinGame -> Float -> Entity -> Entity
 updateEnemy game seconds self = self { location = (x, y), entityTimer = newTimer }
@@ -207,94 +299,77 @@ updateEnemy game seconds self = self { location = (x, y), entityTimer = newTimer
         (oldX, oldY) = location self
         (x, y) = (oldX + 1, (400) + 60 * (sin (oldX / 100)))
         newTimer = entityTimer self + seconds
-        
-updateProjectile :: KaelinGame -> Float -> Entity -> Entity
-updateProjectile _ seconds self = self { location = (x, y'), entityTimer = entityTimer self + seconds }
-    where
-        (x, y) = location self
-        speed = 300
-        direction = if friendly self then 1 else -1
-        y' = y + direction * speed * seconds
+
+trackerEnemy :: Pos -> Entity
+trackerEnemy pos = Entity
+        { location = pos,
+            updateSelf = combo 2.0 (linear 0 (-45)) (combo 5.0 (tracking 220) (linear 0  (-300))),
+            updateWorld = \g _ _ -> g,
+            pic = color magenta $ circleSolid 8,
+            entityTimer = 0,
+            radius = 8,
+            friendly = False
+        }
 
 spawnProjectileFrom :: Entity -> Entity
 spawnProjectileFrom source = Entity
     { location = location source, 
-    updateSelf = updateProjectile,
-    updateWorld = \g _ _ -> g,
-    pic = if friendly source then color green $ circleSolid 4 else color red $ circleSolid 4,
-    entityTimer = 0,
-    radius = 3,
-    friendly = friendly source
+      updateSelf = projectileMovement (friendly source),
+      updateWorld = \g _ _ -> g,
+      pic = if friendly source then color green $ circleSolid 4 else color red $ circleSolid 4,
+      entityTimer = 0,
+      radius = 3,
+      friendly = friendly source
     }
-
-spawnEnemyProjectile :: Entity -> Entity
-spawnEnemyProjectile source = spawnProjectileFrom source { friendly = False }
-
-spawnFriendlyProjectile :: Entity -> Entity
-spawnFriendlyProjectile source = spawnProjectileFrom source { friendly = True }
 
 spawnProjectileAt :: Pos -> Bool -> Entity
 spawnProjectileAt pos isFriendly = Entity
     { location = pos,
-    updateSelf = updateProjectile,
-    updateWorld = \g _ _ -> g,
-    pic = if isFriendly then color yellow $ circleSolid 4 else color red $ circleSolid 4,
-    entityTimer = 0,
-    radius = 3,
-    friendly = isFriendly
+      updateSelf = projectileMovement isFriendly,
+      updateWorld = \g _ _ -> g,
+      pic = if isFriendly then color yellow $ circleSolid 4 else color red $ circleSolid 4,
+      entityTimer = 0,
+      radius = 3,
+      friendly = isFriendly
     }
 
-
-enemyUpdateWorld :: KaelinGame -> Float -> Entity -> KaelinGame
-enemyUpdateWorld game seconds self =
-    if entityTimer self >= shootInterval
-    then let resetEnemy e = if not (friendly e) && location e == location self && radius e == radius self
-                            then e { entityTimer = 0 }
-                            else e
-             resetEntities = map resetEnemy (entities game)
-         in game { entities = spawnEnemyProjectile self : resetEntities }
-    else game
-
-enemyProjectileUpdate :: KaelinGame -> Float -> Entity -> Entity
-enemyProjectileUpdate _ seconds self = self { location = (x, y - speed * seconds), entityTimer = entityTimer self + seconds }
-    where
-        (x, y) = location self
-        speed = 300
-
-shootInterval :: Float
-shootInterval = 1.5
-
 update :: Float -> KaelinGame -> KaelinGame
-update _ game | loseScreen game > 0 = game
-update seconds game =
-    let moved = (moveKaelin seconds . readInput) game
+update seconds game
+    | loseScreen game > 0 = game
+    | otherwise =
+        let cooldown = 0.5
+            enemySpawnCooldown = 2.5
 
-        timer = spawnTimer moved - seconds
+            applyMovement = updateEntities seconds . moveKaelin seconds . readInput
 
-        enemyTimer = enemySpawnTimer moved - seconds
+            decrementTimers s g = g { spawnTimer = spawnTimer g - s, shieldTimer = shieldTimer g - s, enemySpawnTimer = enemySpawnTimer g - s }
 
-        cooldown = 0.5
+            spawnEnemy g =
+                if enemySpawnTimer g <= 0
+                    then g { entities = normalEnemy (-520, 300) : trackerEnemy (0, 500) : entities g, enemySpawnTimer = enemySpawnCooldown }
+                else g { enemySpawnTimer = max 0 (enemySpawnTimer g) }
 
-        enemySpawnCooldown = 2.0
+            resolveEnemyHitsIfNeeded g = if checkEnemyCollision g then resolveEnemyHits g else g
 
-        updated = updateEntities seconds moved
-        
-        afterEnemySpawn = if enemyTimer <= 0
-            then updated { entities = Entity { location = ((-550), 0), updateSelf = updateEnemy, updateWorld = enemyUpdateWorld, pic = color orange $ circleSolid 10, entityTimer = 0.0, radius = 10, friendly = False } : entities moved, enemySpawnTimer = enemySpawnCooldown }  
+            setLoseIfCollided g = if checkPlayerCollision g then g { loseScreen = 1 } else g
 
-            else updated { enemySpawnTimer = max 0 enemyTimer }
-        afterEnemyHits = if checkEnemyCollision afterEnemySpawn
-            then resolveEnemyHits afterEnemySpawn
-                
-            else afterEnemySpawn
-        afterCollision = if checkPlayerCollision afterEnemyHits
-            then afterEnemyHits { loseScreen = 1 }
+            spawnPlayerProjectileIfNeeded g =
+                if spawnHeld g && spawnTimer g <= 0
+                then g { entities = spawnProjectileAt (kaelinLoc g) True : entities g, spawnTimer = cooldown }
+                else g { spawnTimer = max 0 (spawnTimer g) }
 
-            else afterEnemyHits
-        in if spawnHeld afterCollision && timer <= 0
-            then afterCollision { entities = spawnProjectileAt (kaelinLoc afterCollision) True : entities afterCollision, spawnTimer = cooldown }
+            shieldCooldown = 2.0
 
-            else afterCollision { spawnTimer = max 0 timer }
+            spawnShieldIfNeeded g =
+                if shieldHeld g && shieldTimer g <= 0 && not (shieldActive g)
+                then let (px, py) = kaelinLoc g in g { entities = Entity { location = (px, py - 30), updateSelf = updateShield, updateWorld = \x _ _ -> x, pic = color cyan $ circleSolid 8, entityTimer = 0, radius = 8, friendly = True } : entities g, shieldTimer = shieldCooldown, shieldActive = True }
+                else g { shieldTimer = max 0 (shieldTimer g) }
+            
+            updateShieldActive g =
+                let shieldExists = any (\e -> friendly e && radius e == 8) (entities g)
+                in g { shieldActive = shieldExists }
+
+        in (updateShieldActive . spawnShieldIfNeeded . spawnPlayerProjectileIfNeeded . setLoseIfCollided . resolveEnemyHitsIfNeeded . spawnEnemy . decrementTimers seconds . applyMovement) game
 
 main :: IO ()
 main = play window background fps initialState render handleKeys update
