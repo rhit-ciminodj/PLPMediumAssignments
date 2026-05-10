@@ -11,8 +11,8 @@ offset = 100
 window :: Display
 window = InWindow "Kaelin Game" (width, height) (offset, offset)
 
-background :: Color
-background = black
+backgroundColor :: Color
+backgroundColor = black
 
 data KaelinGame = Game
     {   kaelinLoc :: (Float, Float),
@@ -28,7 +28,15 @@ data KaelinGame = Game
         bombTimer :: Float,
         enemySpawnTimer :: Float,
         entities :: [Entity],
-        loseScreen :: Float
+        loseScreen :: Float,
+        winScreen :: Float,
+        bgProgress :: Float,
+        backgroundImage :: Picture,
+        kaelinImage :: Picture,
+        grokImage :: Picture,
+        buffaloImage :: Picture,
+        haysImage :: Picture,
+        wilsonImage :: Picture
     }
 
 data Entity = Entity
@@ -46,16 +54,22 @@ data Entity = Entity
 
 render :: KaelinGame -> Picture
 render game =
-        pictures (overlayPics ++ worldPics)
+        pictures ([bgImg] ++ losePic ++ winPic ++ worldPics)
     where
-        kaelin = color white $ uncurry translate (kaelinLoc game) $ circleSolid 10
+        kaelin = uncurry translate (kaelinLoc game) $ scale 0.05 0.05 $ (kaelinImage game)
         pics = map (\t -> uncurry translate (location t) (pic t)) $ entities game
+        bgImg = translate 0 (((bgProgress game) - 0.5) * (-2800)) $ scale 5 5 $ backgroundImage game
         worldPics = kaelin : pics
         gameOverPic = pictures
             [  translate (-230) 40 $ scale 0.5 0.5 $ color red $ text "GAME OVER"
             , translate (-260) (-40) $ scale 0.2 0.2 $ color white $ text "Press R to restart"
             ]
-        overlayPics = if loseScreen game > 0 then [gameOverPic] else []
+        winGamePic = pictures
+            [  translate (-230) 40 $ scale 0.5 0.5 $ color (light green) $ text "YOU WIN!"
+            , translate (-260) (-40) $ scale 0.2 0.2 $ color white $ text "Press R to restart"
+            ]
+        losePic = if loseScreen game > 0 then [gameOverPic] else []
+        winPic = if winScreen game > 0 then [winGamePic] else []
 
 
 initialState :: KaelinGame
@@ -73,7 +87,15 @@ initialState = Game
         bombTimer = 0,
         enemySpawnTimer = 0,
         entities = [],
-        loseScreen = 0
+        loseScreen = 0,
+        winScreen = 0,
+        bgProgress = 0.0,
+        backgroundImage = text "BAD IMAGE",
+        kaelinImage = text "no kaelin :(",
+        grokImage = text "no slop :)",
+        buffaloImage = text "no buffalo :o",
+        haysImage = text "no hays :o",
+        wilsonImage = text "no wilson :o"
     }
 
 readInput :: KaelinGame -> KaelinGame
@@ -229,7 +251,7 @@ fps = 60
 handleKeys :: Event -> KaelinGame -> KaelinGame
 
 handleKeys (EventKey (Char 'r') _ _ _) game =
-    initialState
+    initialState { backgroundImage = (backgroundImage game), kaelinImage = (kaelinImage game), grokImage = (grokImage game), buffaloImage = (buffaloImage game), haysImage = (haysImage game), wilsonImage = (wilsonImage game) }
 
 handleKeys (EventKey (Char 'w') Down _ _) game =
     game { keysPressed = (True, d, l, r) }
@@ -305,12 +327,12 @@ enemyUpdateWorld game seconds self =
          in game { entities = newProjectile : resetEntities }
     else game
 
-normalEnemy :: Pos -> Entity
-normalEnemy pos = Entity
+normalEnemy :: Pos -> Picture -> Entity
+normalEnemy pos img = Entity
     { location = pos,
-     updateSelf = updateEnemy,
+      updateSelf = updateEnemy,
       updateWorld = enemyUpdateWorld,
-      pic = color orange $ circleSolid 10,
+      pic = img,
       entityTimer = 0,
       radius = 10,
       friendly = False
@@ -323,23 +345,23 @@ updateEnemy game seconds self = self { location = (x, y), entityTimer = newTimer
         (x, y) = (oldX + 1, (400) + 60 * (sin (oldX / 100)))
         newTimer = entityTimer self + seconds
 
-trackerEnemy :: Pos -> Entity
-trackerEnemy pos = Entity
+trackerEnemy :: Pos -> Picture -> Entity
+trackerEnemy pos img = Entity
         { location = pos,
             updateSelf = combo 2.0 (linear 0 (-45)) (combo 5.0 (tracking 220) (linear 0  (-300))),
             updateWorld = \g _ _ -> g,
-            pic = color magenta $ circleSolid 8,
+            pic = img,
             entityTimer = 0,
             radius = 8,
             friendly = False
         }
 
-circularEnemy :: Float -> Float -> Entity
-circularEnemy x speed = Entity
+circularEnemy :: Float -> Float -> Picture -> Entity
+circularEnemy x speed img = Entity
     {   location = (x, 500),
         updateSelf = combo 2.0 (linear 0 (-45)) (combo 10.0 (circular (x, 275) speed) (combo 13.5 (tracking 300) (linear 0 300))),
         updateWorld = \g _ _ -> g,
-        pic = color green $ circleSolid 10,
+        pic = img,
         entityTimer = 0,
         radius = 10,
         friendly = False
@@ -395,6 +417,7 @@ bomb pos = Entity
 update :: Float -> KaelinGame -> KaelinGame
 update seconds game
     | loseScreen game > 0 = game
+    | winScreen game > 0 = game
     | otherwise =
         let cooldown = 0.5
             enemySpawnCooldown = 2.5
@@ -405,7 +428,7 @@ update seconds game
 
             spawnEnemy g =
                 if enemySpawnTimer g <= 0
-                    then g { entities = normalEnemy (-520, 300) : trackerEnemy (0, 500) : (circularEnemy 250 2) : (circularEnemy (-250) (-2)) : entities g, enemySpawnTimer = enemySpawnCooldown }
+                    then g { entities = (normalEnemy (-520, 300) (buffaloImage game)): trackerEnemy (0, 500) (wilsonImage game) : (circularEnemy 250 2 (haysImage game)) : (circularEnemy (-250) (-2) (haysImage game)) : entities g, enemySpawnTimer = enemySpawnCooldown }
                 else g { enemySpawnTimer = max 0 (enemySpawnTimer g) }
 
             resolveEnemyHitsIfNeeded g = if checkEnemyCollision g then resolveEnemyHits g else g
@@ -427,14 +450,28 @@ update seconds game
 
             spawnShieldIfNeeded g =
                 if shieldHeld g && shieldTimer g <= 0 && not (shieldActive g)
-                then let (px, py) = kaelinLoc g in g { entities = Entity { location = (px, py - 30), updateSelf = updateShield, updateWorld = \x _ _ -> x, pic = color cyan $ circleSolid 8, entityTimer = 0, radius = 8, friendly = True } : entities g, shieldTimer = shieldCooldown, shieldActive = True }
+                then let (px, py) = kaelinLoc g in g { entities = Entity { location = (px, py - 30), updateSelf = updateShield, updateWorld = \x _ _ -> x, pic = scale 0.05 0.05 (grokImage game), entityTimer = 0, radius = 8, friendly = True } : entities g, shieldTimer = shieldCooldown, shieldActive = True }
                 else g { shieldTimer = max 0 (shieldTimer g) }
             
             updateShieldActive g =
                 let shieldExists = any (\e -> friendly e && radius e == 8) (entities g)
                 in g { shieldActive = shieldExists }
 
-        in (spawnBombIfNeeded . updateShieldActive . spawnShieldIfNeeded . spawnPlayerProjectileIfNeeded . setLoseIfCollided . resolveEnemyHitsIfNeeded . spawnEnemy . decrementTimers seconds . applyMovement) game
+            updateBackground g = g { bgProgress = (bgProgress g) + (seconds * 0.01) }
+
+            checkWin g = 
+                if bgProgress g >= 1
+                then g { winScreen = 1 }
+                else g
+
+        in (checkWin . updateBackground . spawnBombIfNeeded . updateShieldActive . spawnShieldIfNeeded . spawnPlayerProjectileIfNeeded . setLoseIfCollided . resolveEnemyHitsIfNeeded . spawnEnemy . decrementTimers seconds . applyMovement) game
 
 main :: IO ()
-main = play window background fps initialState render handleKeys update
+main = do
+    bgImg <- loadBMP "./bg.bmp"
+    kaelinImg <- loadBMP "./kaelinmiddlenamewanglastnamehucircle.bmp"
+    grokImg <- loadBMP "./grok.bmp"
+    buffaloImg <- loadBMP "./buffalo.bmp"
+    haysImg <- loadBMP "./hays.bmp"
+    wilsonImg <- loadBMP "./wilson.bmp"
+    play window backgroundColor fps (initialState { backgroundImage = bgImg, kaelinImage = kaelinImg, grokImage = grokImg, buffaloImage = scale 0.08 0.08 buffaloImg, haysImage = scale 0.12 0.12 haysImg, wilsonImage = scale 0.1 0.1 wilsonImg }) render handleKeys update
